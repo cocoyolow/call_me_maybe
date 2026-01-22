@@ -1,4 +1,5 @@
 install:
+	pip install --user uv
 	uv sync
 
 run:
@@ -24,6 +25,8 @@ clean:
 	rm -rf .mypy_cache
 	rm -rf .venv
 	rm -rf src/__pycache__
+	rm -rf llm_sdk/__pycache__
+	rm -rf .vscode
 
 fclean: clean
 	rm -rf data/output

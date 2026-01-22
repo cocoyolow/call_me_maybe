@@ -1,0 +1,24 @@
+from typing import Dict
+from llm_sdk import Small_LLM_Model
+import json
+
+
+def json_to_dict(path: str) -> Dict[str, int]:
+    """convert the json file to a dict"""
+    with open(path, 'r') as f:
+        dictionnary = json.load(f)
+    return dictionnary
+
+
+def reverse_dict(vocab: Dict[str, int]) -> Dict[int, str]:
+    """Reverse the keys and values of a dictionary."""
+    return {v: k for k, v in vocab.items()}
+
+
+def start_generation() -> str:
+    """Start the generation of the prompt"""
+    llm = Small_LLM_Model()
+    vocab_path: str = llm.get_path_to_vocabulary_json()
+    reversed_vocab: Dict[str, int] = json_to_dict(vocab_path)
+    vocab: Dict[int, str] = reverse_dict(reversed_vocab)
+    return ''

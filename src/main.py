@@ -1,23 +1,37 @@
 from pathlib import Path
-from typing import List, Dict
-from pydantic import TypeAdapter
 import sys
 import json
-
-# from llm_sdk import Small_LLM_Model
+from .parser import FunctionDefinitionsValidator, FunctionCallsValidator
+from .generation import start_generation
+from pydantic import ValidationError
+from typing import Dict
 
 
 def main() -> None:
-    assert __file__ is not None
+    """Start the Call Me Maybe program"""
     path: Path = Path(__file__).parent.parent / 'data' / 'output'
     path.mkdir(parents=True, exist_ok=True)
+    data: Dict[str, FunctionCallsValidator | FunctionDefinitionsValidator] = {}
     try:
-        validator: TypeAdapter = TypeAdapter(List[Dict[str, str]])
-        json_path = path.parent / 'input' / 'functions_definition.json'
-        with open(json_path, 'r') as f:
-            data = json.load(f)
-            print(f'Data: {data}')
-            # validator.validate_python(data)
+        json_calls_path = path.parent / 'input' / 'function_calling_tests.json'
+        with open(json_calls_path, 'r') as f:
+            file_info = json.load(f)
+            call_validation = FunctionCallsValidator(items=file_info)
+            print('function call json [OK]')
+            data['calls'] = call_validation
+
+        json_defs_path = path.parent / 'input' / 'functions_definition.json'
+        with open(json_defs_path, 'r') as f:
+            file_info = json.load(f)
+            def_validation = FunctionDefinitionsValidator(items=file_info)
+            print('function definitions json [OK]')
+            data['defs'] = def_validation
+
+        result: str = start_generation(vocab)
+    except ValidationError as e:
+        print("Validation error:", e)
+        sys.exit(1)
+
     except Exception as e:
         err_type = e.__class__.__name__
         print(f'Error appened:\nError type: {err_type}\nError message: {e}')
