@@ -1,9 +1,8 @@
 install:
-	pip install --user uv
 	uv sync
 
 run:
-	uv run python3 -m src.main
+	uv run python3 -m src
 
 debug:
 	@echo "   Starting debugger..."
