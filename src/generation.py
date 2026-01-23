@@ -1,5 +1,6 @@
-from typing import Dict
+from typing import Dict, Union
 from llm_sdk import Small_LLM_Model
+from .parser import FunctionDefinitionsValidator, FunctionCallsValidator
 import json
 
 
@@ -15,10 +16,13 @@ def reverse_dict(vocab: Dict[str, int]) -> Dict[int, str]:
     return {v: k for k, v in vocab.items()}
 
 
-def start_generation() -> str:
-    """Start the generation of the prompt"""
+def start_generation(combined_data: Dict[str,
+                     List[Dict[str,str]] |
+                     Dict]) -> str:
+    """Start the model generation"""
     llm = Small_LLM_Model()
     vocab_path: str = llm.get_path_to_vocabulary_json()
     reversed_vocab: Dict[str, int] = json_to_dict(vocab_path)
     vocab: Dict[int, str] = reverse_dict(reversed_vocab)
+    llm.encode(combined_data[0]['prompt'])
     return ''

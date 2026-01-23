@@ -16,18 +16,18 @@ def main() -> None:
         json_calls_path = path.parent / 'input' / 'function_calling_tests.json'
         with open(json_calls_path, 'r') as f:
             file_info = json.load(f)
-            call_validation = FunctionCallsValidator(items=file_info)
+            FunctionCallsValidator(items=file_info)
             print('function call json [OK]')
-            data['calls'] = call_validation
+            data['calls'] = file_info
 
         json_defs_path = path.parent / 'input' / 'functions_definition.json'
         with open(json_defs_path, 'r') as f:
             file_info = json.load(f)
-            def_validation = FunctionDefinitionsValidator(items=file_info)
+            FunctionDefinitionsValidator(items=file_info)
             print('function definitions json [OK]')
-            data['defs'] = def_validation
+            data['defs'] = file_info
 
-        result: str = start_generation(vocab)
+        result: str = start_generation(data)
     except ValidationError as e:
         print("Validation error:", e)
         sys.exit(1)

@@ -1,5 +1,4 @@
 install:
-	pip install --user uv
 	uv sync
 
 run:
