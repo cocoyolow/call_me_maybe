@@ -35,7 +35,7 @@ class Small_LLM_Model:
         trust_remote_code: bool = True,
     ) -> None:
         self._model_name = model_name
-        
+
         # Auto-select device with priority: mps > cuda > cpu
         if device is None:
             if torch.backends.mps.is_available():
@@ -45,12 +45,13 @@ class Small_LLM_Model:
             else:
                 device = "cpu"
         self._device = device
-        
+
         if dtype is None:
-            dtype = torch.float16 if self._device in ["cuda", "mps"] else torch.float32
+            dtype = torch.float16 if self._device in [
+                "cuda", "mps"] else torch.float32
         self._dtype = dtype
 
-        # --- load tokenizer & model -------------------------------------------------
+        # --- load tokenizer & model ------------------------------------------
         self._tokenizer: PreTrainedTokenizer = AutoTokenizer.from_pretrained(
             model_name, trust_remote_code=trust_remote_code
         )
@@ -92,18 +93,35 @@ class Small_LLM_Model:
         """
         Given a list of input token ids, return the raw logits (no softmax) for the next token as a list of floats.
         """
-        input_tensor = torch.tensor([input_ids], device=self._device, dtype=torch.long)
+        input_tensor = torch.tensor(
+            [input_ids],
+            device=self._device,
+            dtype=torch.long)
         with torch.no_grad():
             out = self._model(input_ids=input_tensor)
-        # Get logits for the last token in the sequence for the batch (batch size 1)
+        # Get logits for the last token in the sequence for the batch (batch
+        # size 1)
         logits = out.logits[0, -1].tolist()
         return [float(x) for x in logits]
 
     def get_path_to_vocabulary_json(self) -> str:
         # Download and get paths to specific files
-        vocab_file_name = self._tokenizer.vocab_files_names.get('vocab_file', "vocab.json")
+        vocab_file_name = self._tokenizer.vocab_files_names.get(
+            'vocab_file', "vocab.json")
         vocab_path = hf_hub_download(
-            repo_id=self._model_name, 
+            repo_id=self._model_name,
             filename=vocab_file_name
         )
         return vocab_path
+
+    def encode(self, text: str) -> list[int]:
+        """Public wrapper for encoding text to token IDs.
+        returns a list of token IDs"""
+        token_ids_tensor = self._encode(text)
+        return token_ids_tensor[0].tolist()
+
+    def decode(self, token_ids: list[int]) -> str:
+        """
+        Public wrapper for decoding token IDs to text.
+        """
+        return self._decode(token_ids)

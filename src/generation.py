@@ -21,4 +21,5 @@ def start_generation() -> str:
     vocab_path: str = llm.get_path_to_vocabulary_json()
     reversed_vocab: Dict[str, int] = json_to_dict(vocab_path)
     vocab: Dict[int, str] = reverse_dict(reversed_vocab)
+    
     return ''
