@@ -9,9 +9,6 @@ from typing import Dict
 
 def main() -> None:
     """Start the Call Me Maybe program"""
-    argc = len(sys.argv)
-    argv = sys.argv
-    if argc == 2 and argv[1] == '--':
 
     path: Path = Path(__file__).parent.parent / 'data' / 'output'
     path.mkdir(parents=True, exist_ok=True)
@@ -31,7 +28,6 @@ def main() -> None:
             print('function definitions json [OK]')
             data['defs'] = file_info
 
-        result: str = start_generation(data)
     except ValidationError as e:
         print("Validation error:", e)
         sys.exit(1)
@@ -41,6 +37,7 @@ def main() -> None:
         print(f'Error appened:\nError type: {err_type}\nError message: {e}')
         sys.exit(1)
 
+    result: str = start_generation(data)
 
 if __name__ == "__main__":
     main()

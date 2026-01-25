@@ -114,10 +114,9 @@ def create_system_prompt(definitions: List[Dict[str, Any]],
     return txt + current_prompt
 
 
-def ask_for_float(llm, input_ids, masks, vocab):
+def ask_for_float(llm, input_ids, masks, vocab, stop_tokens):
     """asks the model for a float"""
     state = "START"
-    stop_tokens = [k for k, v in vocab.items() if v in [",", "}", "\n"]]
 
     while True:
         allowed_indices = []
@@ -134,10 +133,10 @@ def ask_for_float(llm, input_ids, masks, vocab):
             # digit or end char
             allowed_indices = masks['digits']
 
-        logits = llm.get_logits_from_input_ids(input_ids)
+        logits = np.array(llm.get_logits_from_input_ids(input_ids))
         best_natural = int(np.argmax(logits))
 
-        if state == "DECIMAL_PART" and best_natural in stop_tokens:
+        if state in ["DECIMAL_PART", "INT_PART"] and best_natural in stop_tokens:
             break
 
         np_full = np.full(len(logits), -float('inf'))
@@ -162,6 +161,67 @@ def ask_for_float(llm, input_ids, masks, vocab):
     return input_ids
 
 
+def ask_for_int(llm, input_ids, masks, vocab, stop_tokens):
+    """asks the model for an int"""
+    state = "START"
+
+    while True:
+        allowed_indices = []
+
+        if state == "START":
+            allowed_indices = masks['digits'] + masks['minus']
+        elif state == "BODY":
+            allowed_indices = masks['digits']
+
+        logits = np.array(llm.get_logits_from_input_ids(input_ids))
+        best_natural = int(np.argmax(logits))
+
+        if state == "BODY" and best_natural in stop_tokens:
+            break
+
+        np_full = np.full(len(logits), -float('inf'))
+        np_full[allowed_indices] = logits[allowed_indices]
+
+        next_token = int(np.argmax(np_full))
+        input_ids.append(next_token)
+
+        token_str = vocab[next_token].replace('Ġ', '').strip()
+        if token_str == "-":
+            state = "START"
+        else:
+            state = "BODY"
+
+    return input_ids
+
+
+def ask_for_bool(llm, input_ids, masks, vocab):
+    """asks the model for a boolean (true or false)"""
+    logits = np.array(llm.get_logits_from_input_ids(input_ids))
+    np_full = np.full(len(logits), -float('inf'))
+    np_full[masks['bool']] = logits[masks['bool']]
+    next_token = int(np.argmax(np_full))
+    input_ids.append(next_token)
+    return input_ids
+
+
+def ask_for_str(llm, input_ids, masks, vocab):
+    """asks the model for a string"""
+    quote_ids = llm.encode('"')
+    input_ids.extend(quote_ids)
+
+    while True:
+        logits = np.array(llm.get_logits_from_input_ids(input_ids))
+        next_token = int(np.argmax(logits))
+        token_str = vocab[next_token]
+
+        if '"' in token_str:
+            input_ids.append(next_token)
+            break
+        input_ids.append(next_token)
+
+    return input_ids
+
+
 def start_generation(combined_data: Dict[str,
                      List[Dict[str, str]] |
                      Dict]) -> str:
@@ -173,7 +233,7 @@ def start_generation(combined_data: Dict[str,
     vocab_buckets = create_vocab_buckets(vocab)
     prompt: str = create_system_prompt(combined_data['defs'],
                                        combined_data['calls'][0]['prompt'])
-    masks_dict: Dict[str, List[int]] = get_masks(vocab)
+    masks_dict: Dict[str, List[int]] = get_masks(reversed_vocab)
     input_ids: List[int] = llm.encode(prompt)
     generated_index = len(input_ids)
 
@@ -192,12 +252,25 @@ def start_generation(combined_data: Dict[str,
     input_ids.extend(llm.encode('",\n\t"args": {'))
     function_index: int = allowed_names.index(function_name)
     function: Dict[str, Any] = combined_data['defs'][function_index]
+    stop_tokens = [k for k, v in reversed_vocab.items() if v in [",", "}",
+                   "\n"]]
+
     for arg in function['args_names']:
         input_ids.extend(llm.encode(f'"{arg}": '))
+        print(arg)
         match function['args_types'][arg]:
             case 'float':
-                result: List[int] = ask_for_float(llm, input_ids, masks_dict, vocab)
-
+                ask_for_float(
+                             llm, input_ids, masks_dict, reversed_vocab,
+                             stop_tokens)
+            case 'int':
+                ask_for_int(
+                            llm, input_ids, masks_dict, reversed_vocab,
+                            stop_tokens)
+            case 'str':
+                ask_for_str(llm, input_ids, masks_dict, reversed_vocab)
+            case 'bool':
+                ask_for_bool(llm, input_ids, masks_dict, reversed_vocab)
 
     print(llm.decode(input_ids[generated_index:]))
     print("\nGeneration terminée.")
