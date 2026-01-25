@@ -1,7 +1,10 @@
-from typing import Dict, List, Tuple, Any
+from typing import Dict, List, Tuple, Any, Optional
 from llm_sdk import Small_LLM_Model
 import json
 import numpy as np
+
+# Global cache to store the loaded model and related data
+_MODEL_CACHE: Optional[Dict[str, Any]] = None
 
 
 def json_to_dict(path: str) -> Dict[str, int]:
@@ -17,7 +20,7 @@ def reverse_dict(vocab: Dict[str, int]) -> Dict[int, str]:
 
 
 def create_vocab_buckets(vocab: Dict[str, int]) -> \
-        Dict[str, List[Tuple[int, str]]]:
+                         Dict[str, List[Tuple[int, str]]]:
     """
     Create a dictionary of buckets based on the first character of the tokens.
     """
@@ -32,20 +35,13 @@ def create_vocab_buckets(vocab: Dict[str, int]) -> \
     return buckets
 
 
-def get_masks(vocab: Dict[int, str]) -> Dict[str, np.array[int]]:
+def get_masks(vocab: Dict[int, str]) -> Dict[str, List[int]]:
     masks = {
-        'digits': np.array([]),
-        'digits_minus': np.array([]),
-        'minus': np.array([]),
-        'digits_dot': np.array([]),
-        'dot': np.array([]),
-        'bool': np.array([]),
+        'digits': [],
+        'minus': [],
+        'dot': [],
+        'bool': [],
     }
-
-    digits_s = set()
-    minus_s = set()
-    dot_s = set()
-    bool_s = set()
 
     for t_id, raw_t_str in vocab.items():
         t_str = raw_t_str.replace('Ġ', '').strip()
@@ -53,21 +49,40 @@ def get_masks(vocab: Dict[int, str]) -> Dict[str, np.array[int]]:
             continue
 
         if t_str in ["true", "false"]:
-            bool_s.add(t_id)
+            masks['bool'].append(t_id)
 
         if all(c in "0123456789" for c in t_str):
-            digits_s.add(t_id)
+            masks['digits'].append(t_id)
 
         elif t_str == ".":
-            dot_s.add(t_id)
+            masks['dot'].append(t_id)
         elif t_str == "-":
-            minus_s.add(t_id)
-
-    masks['digits'] = np.array(digits_s)
-    masks['minus'] = np.array(minus_s)
-    masks['dot'] = np.array(dot_s)
-    masks['bool'] = np.array(bool_s)
+            masks['minus'].append(t_id)
     return masks
+
+
+def _get_cached_model_data() -> Dict[str, Any]:
+    """
+    Lazy loader for the model and vocabulary data.
+    Ensures the model is loaded only once.
+    """
+    global _MODEL_CACHE
+    if _MODEL_CACHE is None:
+        llm = Small_LLM_Model()
+        vocab_path: str = llm.get_path_to_vocabulary_json()
+        vocab: Dict[str, int] = json_to_dict(vocab_path)
+        reversed_vocab: Dict[int, str] = reverse_dict(vocab)
+        vocab_buckets = create_vocab_buckets(vocab)
+        masks = get_masks(reversed_vocab)
+        
+        _MODEL_CACHE = {
+            'llm': llm,
+            'vocab': vocab,
+            'reversed_vocab': reversed_vocab,
+            'vocab_buckets': vocab_buckets,
+            'masks': masks
+        }
+    return _MODEL_CACHE
 
 
 def get_function_name(llm: Small_LLM_Model,
@@ -77,6 +92,7 @@ def get_function_name(llm: Small_LLM_Model,
                       vocab: Dict[int, str]) -> Tuple[str, List[int]]:
     """
     Construct the function name using AI model with constrained decoding.
+    Optimized to search only relevant tokens.
     """
     current_name = ""
 
@@ -85,32 +101,43 @@ def get_function_name(llm: Small_LLM_Model,
             break
 
         logits = llm.get_logits_from_input_ids(input_ids)
-
-        np_full = np.full(len(logits), -float('inf'))
-
+        
+        # Filter allowed names that start with our current progress
         potential_candidates = [n for n in allowed_names
                                 if n.startswith(current_name)]
         if not potential_candidates:
             break
 
+        # Collect valid next tokens directly
+        valid_indices = []
+        
         valid_next_chars = set()
         for cand in potential_candidates:
             remainder = cand[len(current_name):]
             if remainder:
                 valid_next_chars.add(remainder[0])
 
+        # Instead of iterating over everything, only look at buckets for valid next chars
         for char in valid_next_chars:
-            for token_id, token_str in vocab_buckets[char]:
-                candidate_name = current_name + token_str
-                for name in potential_candidates:
-                    if name.startswith(candidate_name):
-                        np_full[token_id] = logits[token_id]
-                        break
+            if char in vocab_buckets:
+                for token_id, token_str in vocab_buckets[char]:
+                    candidate_token_full = current_name + token_str
+                     # Check if this token actually advances towards a valid name
+                    for name in potential_candidates:
+                        if name.startswith(candidate_token_full):
+                           valid_indices.append(token_id)
+                           break
+        
+        if not valid_indices:
+            break
 
-        next_token_id = int(np.argmax(np_full))
-        next_token_str = vocab[next_token_id]
-
-        input_ids.append(next_token_id)
+        # Find the best token among ONLY the valid indices
+        # Optimization: use python max over valid_indices, avoids full array scan
+        best_token_id = max(valid_indices, key=lambda i: logits[i])
+        
+        next_token_str = vocab[best_token_id]
+        
+        input_ids.append(best_token_id)
         current_name += next_token_str
 
     return (current_name, input_ids)
@@ -131,13 +158,12 @@ def ask_for_float(llm, input_ids, masks, vocab, stop_tokens):
     state = "START"
 
     while True:
-        allowed_indices = np.array([])
+        allowed_indices = []
 
         if state == "START":
-            allowed_indices = masks['digits_minus']
-
+            allowed_indices = masks['digits'] + masks['minus']
         elif state == "INT_PART":
-            allowed_indices = masks['digits_dot']
+            allowed_indices = masks['digits'] + masks['dot']
         elif state == "AFTER_DOT":
             # digit only
             allowed_indices = masks['digits']
@@ -145,16 +171,22 @@ def ask_for_float(llm, input_ids, masks, vocab, stop_tokens):
             # digit or end char
             allowed_indices = masks['digits']
 
-        logits = np.array(llm.get_logits_from_input_ids(input_ids))
-        autorised_logits = logits[allowed_indices]
-        best_natural = int(np.argmax(autorised_logits))
-
-        if state in ["DECIMAL_PART",
-                     "INT_PART"] and best_natural in stop_tokens:
+        logits = llm.get_logits_from_input_ids(input_ids)
+        
+        # Optimization: check if we should stop OR continue with allowed digits
+        # Stop tokens are only valid in certain states
+        candidates = allowed_indices
+        if state in ["DECIMAL_PART", "INT_PART"]:
+             candidates = allowed_indices + stop_tokens
+        
+        if not candidates:
+            # Should not happen, but safe fallback
             break
+            
+        next_token = max(candidates, key=lambda i: logits[i])
 
-
-        next_token = int(np.argmax(np_full))
+        if state in ["DECIMAL_PART", "INT_PART"] and next_token in stop_tokens:
+            break
 
         token_str = vocab[next_token].replace('Ġ', '').strip()
 
@@ -189,8 +221,8 @@ def ask_for_int(llm, input_ids, masks, vocab, stop_tokens):
 
         candidates = allowed_indices
         if state == "BODY":
-            candidates = allowed_indices + stop_tokens
-
+             candidates = allowed_indices + stop_tokens
+        
         if not candidates:
             break
 
@@ -212,10 +244,14 @@ def ask_for_int(llm, input_ids, masks, vocab, stop_tokens):
 
 def ask_for_bool(llm, input_ids, masks, vocab):
     """asks the model for a boolean (true or false)"""
-    logits = np.array(llm.get_logits_from_input_ids(input_ids))
-    np_full = np.full(len(logits), -float('inf'))
-    np_full[masks['bool']] = logits[masks['bool']]
-    next_token = int(np.argmax(np_full))
+    logits = llm.get_logits_from_input_ids(input_ids)
+    
+    # Optimization: Only look at bool tokens
+    allowed = masks['bool']
+    if not allowed:
+        return input_ids 
+        
+    next_token = max(allowed, key=lambda i: logits[i])
     input_ids.append(next_token)
     return input_ids
 
@@ -227,6 +263,8 @@ def ask_for_str(llm, input_ids, masks, vocab):
 
     while True:
         logits = np.array(llm.get_logits_from_input_ids(input_ids))
+        # For strings, keeping full scan logic as masks are complex
+        # But using numpy for speed on large vocab
         next_token = int(np.argmax(logits))
         token_str = vocab[next_token]
 
@@ -242,14 +280,17 @@ def start_generation(combined_data: Dict[str,
                      List[Dict[str, str]] |
                      Dict]) -> str:
     """Start the model generation"""
-    llm = Small_LLM_Model()
-    vocab_path: str = llm.get_path_to_vocabulary_json()
-    vocab: Dict[str, int] = json_to_dict(vocab_path)
-    reversed_vocab: Dict[int, str] = reverse_dict(vocab)
-    vocab_buckets = create_vocab_buckets(vocab)
+    # Use cached model data
+    model_data = _get_cached_model_data()
+    llm = model_data['llm']
+    vocab = model_data['vocab']
+    reversed_vocab = model_data['reversed_vocab']
+    vocab_buckets = model_data['vocab_buckets']
+    masks_dict = model_data['masks']
+    
     prompt: str = create_system_prompt(combined_data['defs'],
                                        combined_data['calls'][0]['prompt'])
-    masks_dict: Dict[str, np.array[int]] = get_masks(reversed_vocab)
+    
     input_ids: List[int] = llm.encode(prompt)
     generated_index = len(input_ids)
 
@@ -268,8 +309,8 @@ def start_generation(combined_data: Dict[str,
     input_ids.extend(llm.encode('",\n\t"args": {'))
     function_index: int = allowed_names.index(function_name)
     function: Dict[str, Any] = combined_data['defs'][function_index]
-    stop_tokens = {k for k, v in reversed_vocab.items() if v in [",", "}",
-                   "\n"]}
+    
+    stop_tokens = [k for k, v in reversed_vocab.items() if v in [",", "}", "\n"]]
 
     for arg in function['args_names']:
         input_ids.extend(llm.encode(f'"{arg}": '))
@@ -277,17 +318,18 @@ def start_generation(combined_data: Dict[str,
         match function['args_types'][arg]:
             case 'float':
                 ask_for_float(
-                    llm, input_ids, masks_dict, reversed_vocab,
-                    stop_tokens)
+                             llm, input_ids, masks_dict, reversed_vocab,
+                             stop_tokens)
             case 'int':
                 ask_for_int(
-                    llm, input_ids, masks_dict, reversed_vocab,
-                    stop_tokens)
+                            llm, input_ids, masks_dict, reversed_vocab,
+                            stop_tokens)
             case 'str':
+                # ask_for_str uses numpy for full vocab search, safer/easier to keep as is for now
                 ask_for_str(llm, input_ids, masks_dict, reversed_vocab)
             case 'bool':
                 ask_for_bool(llm, input_ids, masks_dict, reversed_vocab)
-
+        
     print(llm.decode(input_ids[generated_index:]))
     print("\nGeneration terminée.")
 
