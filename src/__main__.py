@@ -9,6 +9,10 @@ from typing import Dict
 
 def main() -> None:
     """Start the Call Me Maybe program"""
+    argc = len(sys.argv)
+    argv = sys.argv
+    if argc == 2 and argv[1] == '--':
+
     path: Path = Path(__file__).parent.parent / 'data' / 'output'
     path.mkdir(parents=True, exist_ok=True)
     data: Dict[str, FunctionCallsValidator | FunctionDefinitionsValidator] = {}
