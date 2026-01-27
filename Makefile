@@ -14,7 +14,7 @@ debug:
 	@echo "   l (list)       - Show source code"
 	@echo "   q (quit)       - Quit debugger"
 	@echo ""
-	uv run python3 -m pdb -m src.main
+	uv run python3 -m pdb -m src
 
 lint:
 	uv run flake8 --exclude=llm_sdk,.venv

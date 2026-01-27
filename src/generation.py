@@ -2,7 +2,6 @@ from typing import Dict, List, Tuple, Any, Set
 from llm_sdk import Small_LLM_Model
 import json
 import numpy as np
-from numpy.typing import NDArray
 
 
 def json_to_dict(path: str) -> Dict[str, int]:
@@ -41,6 +40,7 @@ def get_masks(vocab: Dict[int, str]) -> Dict[str, Set[int]]:
         'digits_dot': set(),
         'dot': set(),
         'bool': set(),
+        'valid_str_chars': set(),
     }
 
     for t_id, raw_t_str in vocab.items():
@@ -48,10 +48,12 @@ def get_masks(vocab: Dict[int, str]) -> Dict[str, Set[int]]:
         if not t_str:
             continue
 
+        if not ('"' in t_str and t_str[-1] != '"'):
+            masks['valid_str_chars'].add(t_id)
         if t_str in ["true", "false"]:
             masks['bool'].add(t_id)
 
-        if all(c in "0123456789" for c in t_str):
+        elif all(c in "0123456789" for c in t_str):
             masks['digits'].add(t_id)
 
         elif t_str == ".":
@@ -110,17 +112,70 @@ def get_function_name(llm: Small_LLM_Model,
     return (current_name, input_ids)
 
 
-def create_system_prompt(definitions: List[Dict[str, Any]],
-                         current_prompt: str) -> str:
-    """creates the prompt for the model.\n
-    This adds contex to the prompt, giving all the function definitions"""
-    txt = "Available tools:\n"
-    for tool in definitions:
-        txt += f"- {tool}\n"
-    txt += "\nAnswer the user query using the correct tool.\n"
-    txt += "for each function, only fill the arguments needed."
-    txt += '''finish str with '"' character, no '\n' character '''
-    return txt + current_prompt
+def create_system_prompt(
+        definitions: List[Dict[str, Any]], current_prompt: str) -> str:
+    """
+    Creates a prompt optimized for accuracy with strict copying rules.
+    """
+    # 1. Rôle
+    txt = "You are an expert data extraction agent. Call the correct function with PRECISE arguments.\n"
+
+    # 2. Outils
+    txt += "Available tools:\n"
+    for defi in definitions:
+        txt += f"- {json.dumps(defi)}\n"
+
+    # 3. RÈGLES D'OR (Pour contrer les hallucinations)
+    txt += "\n### STRICT RULES:\n"
+    txt += "1. **SOURCE STRING**: Copy the source string WORD-FOR-WORD from the user prompt. Do NOT add '$' signs. Do NOT change numbers.\n"
+    txt += "2. **NEGATIVE NUMBERS**: Keep the minus sign (e.g., -5).\n"
+    txt += "3. **VALID JSON**: Ensure all brackets and quotes are closed.\n"
+
+    # 4. REGEX CHEAT SHEET (Menu imposé)
+    txt += "\n### REGEX PATTERNS (Copy these exact patterns):\n"
+    txt += "- For **DIGITS/NUMBERS**: Use \"\\\\d+\"\n"
+    txt += "- For **VOWELS**: Use \"[aeiouAEIOU]\" (Must have brackets [])\n"
+    txt += "- For **SPECIFIC WORDS**: Use the word itself (e.g. \"cat\")\n"
+    txt += "- For **DATES**: Use \"\\\\d{4}-\\\\d{2}-\\\\d{2}\"\n"
+    txt += "- For **ANYTHING**: Use \".+\"\n"
+
+    # 5. EXAMPLES (C'est ici qu'on corrige tes erreurs)
+    txt += "\n### EXAMPLES:\n"
+
+    # Ex 1: Force la copie exacte (Pas de $) + Regex Digits
+    txt += "User: 'Substitute the digits in \"Order 552 count 30\" with \"#\"'\n"
+    txt += "Assistant: {\n"
+    txt += '  "fn_name": "fn_substitute_string_with_regex",\n'
+    txt += '  "args": {"source_string": "Order 552 count 30", "regex": "\\\\d+", "replacement": "#"}\n'
+    txt += "}\n\n"
+
+    # Ex 2: Force les crochets pour les voyelles
+    txt += "User: 'Replace all vowels in \"Hello World\" with *'\n"
+    txt += "Assistant: {\n"
+    txt += '  "fn_name": "fn_substitute_string_with_regex",\n'
+    txt += '  "args": {"source_string": "Hello World", "regex": "[aeiouAEIOU]", "replacement": "*"}\n'
+    txt += "}\n\n"
+
+    # Ex 3: Nombres Négatifs
+    txt += "User: 'Add -5 and 10'\n"
+    txt += "Assistant: {\n"
+    txt += '  "fn_name": "fn_add_numbers",\n'
+    txt += '  "args": {"a": -5, "b": 10}\n'
+    txt += "}\n\n"
+
+    # Ex 4: Remplacement simple
+    txt += "User: 'Replace \"dog\" with \"cat\" in \"My dog barks\"'\n"
+    txt += "Assistant: {\n"
+    txt += '  "fn_name": "fn_substitute_string_with_regex",\n'
+    txt += '  "args": {"source_string": "My dog barks", "regex": "dog", "replacement": "cat"}\n'
+    txt += "}\n"
+
+    # 6. Prompt final
+    txt += "\nNow, answer the user query:\n"
+    txt += f"User: {current_prompt}\n"
+    txt += "Assistant: "
+
+    return txt
 
 
 def ask_for_float(llm: Small_LLM_Model,
@@ -209,22 +264,24 @@ def ask_for_bool(llm, input_ids, masks, vocab):
     input_ids.append(next_token)
 
 
-def ask_for_str(llm, input_ids, vocab):
+def ask_for_str(llm, input_ids, masks_dict, vocab):
     """asks the model for a string"""
     quote_ids = llm.encode('"')
     input_ids.extend(quote_ids)
 
     while True:
-        logits = np.array(llm.get_logits_from_input_ids(input_ids))
+        logits = llm.get_logits_from_input_ids(input_ids)
 
-        next_token = int(np.argmax(logits))
+        next_token = max(
+            masks_dict['valid_str_chars'],
+            key=lambda i: logits[i])
         token_str = vocab[next_token]
 
         token_str = vocab[next_token].replace('Ġ', '').strip()
-        input_ids.append(next_token)
-        if len(token_str) and token_str[-1] == '"':
+        if token_str.endswith('"'):
             break
-
+        input_ids.append(next_token)
+    input_ids.extend(quote_ids)
     return input_ids
 
 
@@ -279,7 +336,7 @@ def start_generation(combined_data: Dict[str,
                         llm, input_ids, masks_dict, reversed_vocab,
                         stop_tokens)
                 case 'str':
-                    ask_for_str(llm, input_ids, reversed_vocab)
+                    ask_for_str(llm, input_ids, masks_dict, reversed_vocab)
                 case 'bool':
                     ask_for_bool(llm, input_ids, masks_dict, reversed_vocab)
             if arg != function['args_names'][-1]:
