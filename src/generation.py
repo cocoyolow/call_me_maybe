@@ -39,7 +39,6 @@ def get_masks(vocab: Dict[int, str]) -> Dict[str, Set[int]]:
         'minus': set(),
         'digits_dot': set(),
         'dot': set(),
-        'bool': set(),
         'valid_str_chars': set(),
     }
 
@@ -50,10 +49,8 @@ def get_masks(vocab: Dict[int, str]) -> Dict[str, Set[int]]:
 
         if not ('"' in t_str and t_str[-1] != '"'):
             masks['valid_str_chars'].add(t_id)
-        if t_str in ["true", "false"]:
-            masks['bool'].add(t_id)
 
-        elif all(c in "0123456789" for c in t_str):
+        if all(c in "0123456789" for c in t_str):
             masks['digits'].add(t_id)
 
         elif t_str == ".":
@@ -70,7 +67,7 @@ def get_function_name(llm: Small_LLM_Model,
                       input_ids: List[int],
                       vocab_buckets: Dict[str, List[Tuple[int, str]]],
                       allowed_names: List[str],
-                      vocab: Dict[int, str]) -> Tuple[str, List[int]]:
+                      vocab: Dict[int, str]) -> str:
     """
     Construct the function name using AI model with constrained decoding.
     """
@@ -109,7 +106,7 @@ def get_function_name(llm: Small_LLM_Model,
         input_ids.append(next_token_id)
         current_name += next_token_str
 
-    return (current_name, input_ids)
+    return current_name
 
 
 def create_system_prompt(
@@ -228,21 +225,14 @@ def ask_for_float(llm: Small_LLM_Model,
 def ask_for_int(llm, input_ids, masks, vocab, stop_tokens):
     """asks the model for an int"""
     state = "START"
-
-    allowed_indices = set()
+    allowed_indices: Set[int] = masks['digits_minus']
     has_digits = False
     while True:
-
-        if state == "START":
-            allowed_indices = masks['digits_minus']
-        elif state == "BODY":
-            allowed_indices = masks['digits'] | stop_tokens
-
         logits = llm.get_logits_from_input_ids(input_ids)
 
         next_token = max(allowed_indices, key=lambda i: logits[i])
 
-        if not has_digits and next_token in masks['digits_minus']:
+        if not has_digits and next_token in masks['digits']:
             has_digits = True
 
         if has_digits and next_token in stop_tokens:
@@ -250,18 +240,11 @@ def ask_for_int(llm, input_ids, masks, vocab, stop_tokens):
 
         input_ids.append(next_token)
 
-        token_str = vocab[next_token].replace('Ġ', '').strip()
-        if token_str == "-":
+        if state != "BODY":
+            allowed_indices = masks['digits'] | stop_tokens
             state = "BODY"
 
     return input_ids
-
-
-def ask_for_bool(llm, input_ids, masks, vocab):
-    """asks the model for a boolean (true or false)"""
-    logits = np.array(llm.get_logits_from_input_ids(input_ids))
-    next_token = max(masks['bool'], key=lambda i: logits[i])
-    input_ids.append(next_token)
 
 
 def ask_for_str(llm, input_ids, masks_dict, vocab):
@@ -295,35 +278,32 @@ def start_generation(combined_data: Dict[str,
     reversed_vocab: Dict[int, str] = reverse_dict(vocab)
     vocab_buckets = create_vocab_buckets(vocab)
     COMMA = llm.encode(',')
+    PROMPT = llm.encode('{\n\t"prompt": ')
+    FN_NAME = llm.encode(',\n\t"fn_name": "')
+    ARGS_MES = llm.encode(',\n\t"args": {')
     BRACE_CLOSE = llm.encode('}')
     masks_dict: Dict[str, set[int]] = get_masks(reversed_vocab)
+    allowed_names: List[str] = []
+    for y in range(len(combined_data['defs'])):
+        allowed_names.append(combined_data['defs'][y]['fn_name'])
 
-    for i in range(len(combined_data['calls'])):
+    for i in range(1):
         cur_prompt: str = combined_data['calls'][i]['prompt']
         prompt: str = create_system_prompt(combined_data['defs'],
                                            cur_prompt)
         input_ids: List[int] = llm.encode(prompt)
         generated_index = len(input_ids)
-
-        skeleton: str = '{\n\t"prompt": ' + \
-            f'"{cur_prompt}"' + \
-            ',\n' + '\t"fn_name": "'
-        encoded_skeleton = llm.encode(skeleton)
-        input_ids.extend(encoded_skeleton)
-        allowed_names: List[str] = []
-        for y in range(len(combined_data['defs'])):
-            allowed_names.append(combined_data['defs'][y]['fn_name'])
-
+        input_ids.extend(PROMPT)
+        input_ids.extend(llm.encode(f'"{cur_prompt}"'))
+        input_ids.extend(FN_NAME)
         name_result: Tuple[str, List[int]] = get_function_name(
             llm, input_ids, vocab_buckets, allowed_names, reversed_vocab)
-        function_name = name_result[0]
-        input_ids = name_result[1]
-        input_ids.extend(llm.encode('",\n\t"args": {'))
+        function_name = name_result
+        input_ids.extend(ARGS_MES)
         function_index: int = allowed_names.index(function_name)
         function: Dict[str, Any] = combined_data['defs'][function_index]
         stop_tokens = {k for k, v in reversed_vocab.items() if v in [",", "}",
                                                                      "\n"]}
-
         for arg in function['args_names']:
             input_ids.extend(llm.encode(f'"{arg}": '))
             match function['args_types'][arg]:
@@ -337,8 +317,7 @@ def start_generation(combined_data: Dict[str,
                         stop_tokens)
                 case 'str':
                     ask_for_str(llm, input_ids, masks_dict, reversed_vocab)
-                case 'bool':
-                    ask_for_bool(llm, input_ids, masks_dict, reversed_vocab)
+
             if arg != function['args_names'][-1]:
                 input_ids.extend(COMMA)
         input_ids.extend(BRACE_CLOSE)
