@@ -4,7 +4,7 @@ import json
 import numpy as np
 
 
-def json_to_dict(path: str) -> Dict[str, int]:
+def json_to_dict(path: str) -> Any:
     """convert the json file to a dict"""
     with open(path, 'r') as f:
         dictionnary = json.load(f)
@@ -33,7 +33,7 @@ def create_vocab_buckets(vocab: Dict[str, int]) -> \
 
 
 def get_masks(vocab: Dict[int, str]) -> Dict[str, Set[int]]:
-    masks = {
+    masks: Dict[str, Set[int]] = {
         'digits': set(),
         'digits_minus': set(),
         'minus': set(),
@@ -64,49 +64,54 @@ def get_masks(vocab: Dict[int, str]) -> Dict[str, Set[int]]:
 
 
 def get_function_name(llm: Small_LLM_Model,
-                      input_ids: List[int],
-                      vocab_buckets: Dict[str, List[Tuple[int, str]]],
-                      allowed_names: List[str],
-                      vocab: Dict[int, str]) -> str:
+                      input_ids: List[int], allowed_names: List[str]) -> str:
     """
-    Construct the function name using AI model with constrained decoding.
+    Ultra-optimized function name generation.
+    Pre-calculates valid token sequences and follows them.
     """
-    current_name = ""
+    candidate_sequences = [llm.encode(name) for name in allowed_names]
+
+    active_indices = list(range(len(allowed_names)))
+    pos = 0
 
     while True:
-        if current_name in allowed_names:
+        valid_next_tokens = set()
+        token_to_candidates: Dict[int, List[int]] = {}
+
+        for idx in active_indices:
+            seq = candidate_sequences[idx]
+            if pos < len(seq):
+                t = seq[pos]
+                valid_next_tokens.add(t)
+
+                if t not in token_to_candidates:
+                    token_to_candidates[t] = []
+                token_to_candidates[t].append(idx)
+
+        if not valid_next_tokens:
             break
 
-        logits = llm.get_logits_from_input_ids(input_ids)
+        logits = np.array(llm.get_logits_from_input_ids(input_ids))
 
-        np_full = np.full(len(logits), -float('inf'))
+        candidates_arr = np.array(list(valid_next_tokens), dtype=int)
+        best_local_idx = np.argmax(logits[candidates_arr])
+        best_token = candidates_arr[best_local_idx]
 
-        potential_candidates = [n for n in allowed_names
-                                if n.startswith(current_name)]
-        if not potential_candidates:
-            break
+        input_ids.append(best_token)
 
-        valid_next_chars = set()
-        for cand in potential_candidates:
-            remainder = cand[len(current_name):]
-            if remainder:
-                valid_next_chars.add(remainder[0])
+        active_indices = token_to_candidates[best_token]
+        pos += 1
 
-        for char in valid_next_chars:
-            for token_id, token_str in vocab_buckets[char]:
-                candidate_name = current_name + token_str
-                for name in potential_candidates:
-                    if name.startswith(candidate_name):
-                        np_full[token_id] = logits[token_id]
-                        break
+        matched_name = None
+        for idx in active_indices:
+            if len(candidate_sequences[idx]) == pos:
+                matched_name = allowed_names[idx]
+                break
 
-        next_token_id = int(np.argmax(np_full))
-        next_token_str = vocab[next_token_id]
+        if matched_name:
+            return matched_name
 
-        input_ids.append(next_token_id)
-        current_name += next_token_str
-
-    return current_name
+    return ""
 
 
 def create_system_prompt(
@@ -115,62 +120,31 @@ def create_system_prompt(
     Creates a prompt optimized for accuracy with strict copying rules.
     """
     # 1. Rôle
-    txt = "You are an expert data extraction agent. Call the correct function with PRECISE arguments.\n"
+    txt = "You are an expert data extraction agent."
+    txt += " Call the correct function with PRECISE arguments.\n"
 
     # 2. Outils
     txt += "Available tools:\n"
     for defi in definitions:
-        txt += f"- {json.dumps(defi)}\n"
+        txt += f"- {defi['fn_name']}\n"
 
     # 3. RÈGLES D'OR (Pour contrer les hallucinations)
-    txt += "\n### STRICT RULES:\n"
-    txt += "1. **SOURCE STRING**: Copy the source string WORD-FOR-WORD from the user prompt. Do NOT add '$' signs. Do NOT change numbers.\n"
-    txt += "2. **NEGATIVE NUMBERS**: Keep the minus sign (e.g., -5).\n"
-    txt += "3. **VALID JSON**: Ensure all brackets and quotes are closed.\n"
-
-    # 4. REGEX CHEAT SHEET (Menu imposé)
-    txt += "\n### REGEX PATTERNS (Copy these exact patterns):\n"
-    txt += "- For **DIGITS/NUMBERS**: Use \"\\\\d+\"\n"
-    txt += "- For **VOWELS**: Use \"[aeiouAEIOU]\" (Must have brackets [])\n"
-    txt += "- For **SPECIFIC WORDS**: Use the word itself (e.g. \"cat\")\n"
-    txt += "- For **DATES**: Use \"\\\\d{4}-\\\\d{2}-\\\\d{2}\"\n"
-    txt += "- For **ANYTHING**: Use \".+\"\n"
-
-    # 5. EXAMPLES (C'est ici qu'on corrige tes erreurs)
-    txt += "\n### EXAMPLES:\n"
-
-    # Ex 1: Force la copie exacte (Pas de $) + Regex Digits
-    txt += "User: 'Substitute the digits in \"Order 552 count 30\" with \"#\"'\n"
-    txt += "Assistant: {\n"
-    txt += '  "fn_name": "fn_substitute_string_with_regex",\n'
-    txt += '  "args": {"source_string": "Order 552 count 30", "regex": "\\\\d+", "replacement": "#"}\n'
-    txt += "}\n\n"
-
-    # Ex 2: Force les crochets pour les voyelles
-    txt += "User: 'Replace all vowels in \"Hello World\" with *'\n"
-    txt += "Assistant: {\n"
-    txt += '  "fn_name": "fn_substitute_string_with_regex",\n'
-    txt += '  "args": {"source_string": "Hello World", "regex": "[aeiouAEIOU]", "replacement": "*"}\n'
-    txt += "}\n\n"
-
-    # Ex 3: Nombres Négatifs
-    txt += "User: 'Add -5 and 10'\n"
-    txt += "Assistant: {\n"
-    txt += '  "fn_name": "fn_add_numbers",\n'
-    txt += '  "args": {"a": -5, "b": 10}\n'
-    txt += "}\n\n"
-
-    # Ex 4: Remplacement simple
-    txt += "User: 'Replace \"dog\" with \"cat\" in \"My dog barks\"'\n"
-    txt += "Assistant: {\n"
-    txt += '  "fn_name": "fn_substitute_string_with_regex",\n'
-    txt += '  "args": {"source_string": "My dog barks", "regex": "dog", "replacement": "cat"}\n'
-    txt += "}\n"
-
-    # 6. Prompt final
-    txt += "\nNow, answer the user query:\n"
-    txt += f"User: {current_prompt}\n"
-    txt += "Assistant: "
+    txt += ("\n### STRICT RULES:\n"
+            "1. **SOURCE STRING**: Copy the source string WORD-FOR-WORD "
+            "from the user prompt. Do NOT add '$' signs."
+            " Do NOT change numbers.\n"
+            "2. **NEGATIVE NUMBERS**: Keep the minus sign (e.g., -5).\n"
+            "\nRegex Example:\n"
+            "'Replace vowels in \"Test\" with *'\n"
+            "{\"fn_name\": \"fn_substitute_string_with_regex\", \"args\":"
+            "{\"source_string\": \"Test\", \"regex\": \"[aeiouAEIOU]\","
+            "\"replacement\": \"*\""
+            "float example:\n"
+            "'What is the square root of 16?'\n"
+            "{\"fn_name\": \"fn_get_square_root\", \"args\": {\"a\": 16.0"
+            "\nNow, answer the user query:\n"
+            f"User: {current_prompt}\n"
+            "Assistant: ")
 
     return txt
 
@@ -184,10 +158,12 @@ def ask_for_float(llm: Small_LLM_Model,
     digits_and_end: Set[int] = masks['digits'] | stop_tokens
     digits_dot_and_end: Set[int] = masks['digits_dot'] | stop_tokens
     allowed_indices = set()
+
     while True:
         if state == "START":
             allowed_indices = masks['digits_minus']
-
+        elif state == "AFTER_MINUS":
+            allowed_indices = masks['digits_dot']
         elif state == "INT_PART":
             allowed_indices = digits_dot_and_end
         elif state == "AFTER_DOT":
@@ -198,7 +174,6 @@ def ask_for_float(llm: Small_LLM_Model,
             allowed_indices = digits_and_end
 
         logits = llm.get_logits_from_input_ids(input_ids)
-
         best_natural = max(allowed_indices, key=lambda i: logits[i])
 
         if state in ["DECIMAL_PART",
@@ -208,7 +183,7 @@ def ask_for_float(llm: Small_LLM_Model,
         token_str = vocab[best_natural].replace('Ġ', '').strip()
 
         if token_str == "-":
-            state = "START"
+            state = "AFTER_MINUS"
         elif token_str == ".":
             state = "AFTER_DOT"
         elif token_str.isdigit():
@@ -218,11 +193,12 @@ def ask_for_float(llm: Small_LLM_Model,
                 state = "DECIMAL_PART"
 
         input_ids.append(best_natural)
-
     return input_ids
 
 
-def ask_for_int(llm, input_ids, masks, vocab, stop_tokens):
+def ask_for_int(llm: Small_LLM_Model,
+                input_ids: List[int], masks: Dict[str, Set[int]],
+                stop_tokens: set[int]) -> List[int]:
     """asks the model for an int"""
     state = "START"
     allowed_indices: Set[int] = masks['digits_minus']
@@ -247,17 +223,20 @@ def ask_for_int(llm, input_ids, masks, vocab, stop_tokens):
     return input_ids
 
 
-def ask_for_str(llm, input_ids, masks_dict, vocab):
+def ask_for_str(llm: Small_LLM_Model,
+                input_ids: List[int],
+                masks_dict: Dict[str, Set[int]],
+                vocab: Dict[int, str]) -> List[int]:
     """asks the model for a string"""
     quote_ids = llm.encode('"')
     input_ids.extend(quote_ids)
-
+    valid_indexes = np.array(list(masks_dict['valid_str_chars']), dtype=int)
     while True:
-        logits = llm.get_logits_from_input_ids(input_ids)
+        logits = np.array(llm.get_logits_from_input_ids(input_ids))
 
-        next_token = max(
-            masks_dict['valid_str_chars'],
-            key=lambda i: logits[i])
+        local_index = int(np.argmax(logits[valid_indexes]))
+
+        next_token = valid_indexes[local_index]
         token_str = vocab[next_token]
 
         token_str = vocab[next_token].replace('Ġ', '').strip()
@@ -269,14 +248,13 @@ def ask_for_str(llm, input_ids, masks_dict, vocab):
 
 
 def start_generation(combined_data: Dict[str,
-                     List[Dict[str, str]] |
-                     Dict]) -> str:
+                     List[Dict[str, str]]]) -> List[Dict[str, Any]]:
     """Start the model generation"""
+    final_result: List[Dict[str, Any]] = []
     llm = Small_LLM_Model()
     vocab_path: str = llm.get_path_to_vocabulary_json()
     vocab: Dict[str, int] = json_to_dict(vocab_path)
     reversed_vocab: Dict[int, str] = reverse_dict(vocab)
-    vocab_buckets = create_vocab_buckets(vocab)
     COMMA = llm.encode(',')
     PROMPT = llm.encode('{\n\t"prompt": ')
     FN_NAME = llm.encode(',\n\t"fn_name": "')
@@ -287,7 +265,7 @@ def start_generation(combined_data: Dict[str,
     for y in range(len(combined_data['defs'])):
         allowed_names.append(combined_data['defs'][y]['fn_name'])
 
-    for i in range(1):
+    for i in range(len(combined_data['calls'])):
         cur_prompt: str = combined_data['calls'][i]['prompt']
         prompt: str = create_system_prompt(combined_data['defs'],
                                            cur_prompt)
@@ -296,9 +274,10 @@ def start_generation(combined_data: Dict[str,
         input_ids.extend(PROMPT)
         input_ids.extend(llm.encode(f'"{cur_prompt}"'))
         input_ids.extend(FN_NAME)
-        name_result: Tuple[str, List[int]] = get_function_name(
-            llm, input_ids, vocab_buckets, allowed_names, reversed_vocab)
+        name_result: str = get_function_name(
+            llm, input_ids, allowed_names)
         function_name = name_result
+        input_ids.extend(llm.encode('"'))
         input_ids.extend(ARGS_MES)
         function_index: int = allowed_names.index(function_name)
         function: Dict[str, Any] = combined_data['defs'][function_index]
@@ -313,16 +292,20 @@ def start_generation(combined_data: Dict[str,
                         stop_tokens)
                 case 'int':
                     ask_for_int(
-                        llm, input_ids, masks_dict, reversed_vocab,
-                        stop_tokens)
+                        llm, input_ids, masks_dict, stop_tokens)
                 case 'str':
                     ask_for_str(llm, input_ids, masks_dict, reversed_vocab)
-
             if arg != function['args_names'][-1]:
                 input_ids.extend(COMMA)
         input_ids.extend(BRACE_CLOSE)
         input_ids.extend(llm.encode("\n}"))
-        print(llm.decode(input_ids[generated_index:]))
+        # import time as t
+        final_result.append(json.loads(
+            llm.decode(input_ids[generated_index:])))
+        # t1 = t.time()
+        # print(llm.decode(input_ids[generated_index:]))
+        # t2 = t.time()
+        # print(f"Time for call: {t2 - t1}")
     print("\nGeneration finished.")
 
-    return llm.decode(input_ids[generated_index:])
+    return final_result

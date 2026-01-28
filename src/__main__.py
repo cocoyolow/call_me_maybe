@@ -4,15 +4,28 @@ import json
 from .parser import FunctionDefinitionsValidator, FunctionCallsValidator
 from .generation import start_generation
 from pydantic import ValidationError
-from typing import Dict
+from typing import Dict, List, Any
 
 
 def main() -> None:
     """Start the Call Me Maybe program"""
 
+    argc: int = len(sys.argv)
+
+    path_input: Path
+    path_output: Path
+    if argc == 1:
+        path_input = Path(__file__).parent.parent / 'data' / 'input'
+        path_output = Path(__file__).parent.parent / 'data' / 'output'
+    elif argc == 2:
+        if sys.argv[1] == '--input':
+            path_input = sys.argv[2]
+        elif sys.argv[1] == '--output':
+            path_output = sys.argv[2]
+
     path: Path = Path(__file__).parent.parent / 'data' / 'output'
     path.mkdir(parents=True, exist_ok=True)
-    data: Dict[str, FunctionCallsValidator | FunctionDefinitionsValidator] = {}
+    data: Dict[str, List[Dict[str, Any]]] = {}
     try:
         json_calls_path = path.parent / 'input' / 'function_calling_tests.json'
         with open(json_calls_path, 'r') as f:
@@ -37,7 +50,15 @@ def main() -> None:
         print(f'Error appened:\nError type: {err_type}\nError message: {e}')
         sys.exit(1)
 
-    result: str = start_generation(data)
+    try:
+        result: List[Dict[str, Any]] = start_generation(data)
+        with open(path / "function_calling_results.json", "w") as f:
+            json.dump(result, f, indent=4)
+    except Exception as e:
+        err_type = e.__class__.__name__
+        print(f'Error appened:\nError type: {err_type}\nError message: {e}')
+        sys.exit(1)
+
 
 if __name__ == "__main__":
     main()
