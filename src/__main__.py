@@ -20,7 +20,7 @@ def exit_wrong_format() -> None:
     print('error: wrong format: the correct format is :\n',
           'uv run python -m src',
           '[--input <input_file>] [--output <output_file>]')
-    exit(1)
+    sys.exit(1)
 
 
 def validate_args(argv: List[str], argc: int) -> Tuple[Path, Path]:

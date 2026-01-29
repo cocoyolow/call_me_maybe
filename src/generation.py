@@ -84,7 +84,8 @@ def get_masks(vocab: Dict[int, str]) -> Dict[str, Set[int]]:
             continue
 
         if not ('"' in t_str and t_str[-1] != '"'):
-            masks['valid_str_chars'].add(t_id)
+            if "\\" not in t_str:
+                masks['valid_str_chars'].add(t_id)
 
         if all(c in "0123456789" for c in t_str):
             masks['digits'].add(t_id)
@@ -184,7 +185,6 @@ def create_system_prompt(
             "1. **SOURCE STRING**: Copy the source string WORD-FOR-WORD "
             "from the user prompt. Do NOT add '$' signs."
             " Do NOT change numbers.\n"
-            "2. **NEGATIVE NUMBERS**: Keep the minus sign (e.g., -5).\n"
             "\nRegex Example:\n"
             "'Replace vowels in \"Test\" with *'\n"
             "{\"fn_substitute_string_with_regex\" = \"args\":"
@@ -216,7 +216,7 @@ def ask_for_float(llm: Small_LLM_Model,
         None
     """
     state = "START"
-
+    result: str = ""
     digits_and_end: Set[int] = masks['digits'] | stop_tokens
     digits_dot_and_end: Set[int] = masks['digits_dot'] | stop_tokens
     allowed_indices = set()
@@ -243,7 +243,7 @@ def ask_for_float(llm: Small_LLM_Model,
             break
 
         token_str = vocab[best_natural].replace('Ġ', '').strip()
-
+        result += token_str
         if token_str == "-":
             state = "AFTER_MINUS"
         elif token_str == ".":
@@ -255,6 +255,8 @@ def ask_for_float(llm: Small_LLM_Model,
                 state = "DECIMAL_PART"
 
         input_ids.append(best_natural)
+    if '.' not in result:
+        input_ids.extend(llm.encode('.0'))
 
 
 def ask_for_int(llm: Small_LLM_Model,
@@ -366,6 +368,7 @@ def start_generation(combined_data: Dict[str,
         function_name = name_result
         input_ids.extend(llm.encode('"'))
         input_ids.extend(ARGS_MES)
+        print("function:", function_name)
         function_index: int = allowed_names.index(function_name)
         function: Dict[str, Any] = combined_data['defs'][function_index]
         stop_tokens = {k for k, v in reversed_vocab.items() if v in [",", "}",
