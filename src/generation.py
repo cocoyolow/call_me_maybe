@@ -2,17 +2,37 @@ from typing import Dict, List, Tuple, Any, Set
 from llm_sdk import Small_LLM_Model
 import json
 import numpy as np
+import sys
 
 
 def json_to_dict(path: str) -> Any:
-    """convert the json file to a dict"""
-    with open(path, 'r') as f:
-        dictionnary = json.load(f)
+    """convert the json file to a dict
+
+    Args:
+        path (str): path to the json file
+
+    Returns:
+        Any: the json file as a dict
+    """
+    try:
+        with open(path, 'r') as f:
+            dictionnary = json.load(f)
+    except Exception as e:
+        err_type = e.__class__.__name__
+        print(f'Error appened:\nError type: {err_type}\nError message: {e}')
+        sys.exit(1)
     return dictionnary
 
 
 def reverse_dict(vocab: Dict[str, int]) -> Dict[int, str]:
-    """Reverse the keys and values of a dictionary."""
+    """Reverse the keys and values of a dictionary.
+
+    Args:
+        vocab (Dict[str, int]): the dictionary to reverse
+
+    Returns:
+        Dict[int, str]: the reversed dictionary
+    """
     return {v: k for k, v in vocab.items()}
 
 
@@ -20,6 +40,12 @@ def create_vocab_buckets(vocab: Dict[str, int]) -> \
         Dict[str, List[Tuple[int, str]]]:
     """
     Create a dictionary of buckets based on the first character of the tokens.
+
+    Args:
+        vocab (Dict[str, int]): the vocabulary to create the buckets from
+
+    Returns:
+        Dict[str, List[Tuple[int, str]]]: the buckets created from the vocab
     """
     buckets: Dict[str, List[Tuple[int, str]]] = {}
     for t_str, t_id in vocab.items():
@@ -33,6 +59,16 @@ def create_vocab_buckets(vocab: Dict[str, int]) -> \
 
 
 def get_masks(vocab: Dict[int, str]) -> Dict[str, Set[int]]:
+    """Returns a dictionary with the masks for each type of token
+    the masks are used to restrict the generation of the model,
+    thus optimise performance and accuracy
+
+    Args:
+        vocab (Dict[int, str]): the vocabulary to create the masks from
+
+    Returns:
+        Dict[str, Set[int]]: the masks created from the vocab
+    """
     masks: Dict[str, Set[int]] = {
         'digits': set(),
         'digits_minus': set(),
@@ -68,6 +104,14 @@ def get_function_name(llm: Small_LLM_Model,
     """
     Ultra-optimized function name generation.
     Pre-calculates valid token sequences and follows them.
+    fills the input_ids with the tokens of the result
+    Args:
+        llm (Small_LLM_Model): the model to use for the generation
+        input_ids (List[int]): the input ids to use for the generation
+        allowed_names (List[str]): the allowed names to use for the generation
+
+    Returns:
+        str: the name of the function
     """
     candidate_sequences = [llm.encode(name) for name in allowed_names]
 
@@ -118,25 +162,32 @@ def create_system_prompt(
         definitions: List[Dict[str, Any]], current_prompt: str) -> str:
     """
     Creates a prompt optimized for accuracy with strict copying rules.
+
+    Args:
+        definitions (List[Dict[str, Any]]): the function definitions
+        current_prompt (str): the current prompt
+
+    Returns:
+        str: the detailed system prompt
     """
     # 1. Rôle
     txt = "You are an expert data extraction agent."
     txt += " Call the correct function with PRECISE arguments.\n"
+    txt += "enter ONLY the arg of the function\n"
+    txt += "example hello"
 
-    # 2. Outils
     txt += "Available tools:\n"
     for defi in definitions:
         txt += f"- {defi['fn_name']}\n"
 
-    # 3. RÈGLES D'OR (Pour contrer les hallucinations)
-    txt += ("\n### STRICT RULES:\n"
+    txt += ("\nSTRICT RULES:\n"
             "1. **SOURCE STRING**: Copy the source string WORD-FOR-WORD "
             "from the user prompt. Do NOT add '$' signs."
             " Do NOT change numbers.\n"
             "2. **NEGATIVE NUMBERS**: Keep the minus sign (e.g., -5).\n"
             "\nRegex Example:\n"
             "'Replace vowels in \"Test\" with *'\n"
-            "{\"fn_name\": \"fn_substitute_string_with_regex\", \"args\":"
+            "{\"fn_substitute_string_with_regex\" = \"args\":"
             "{\"source_string\": \"Test\", \"regex\": \"[aeiouAEIOU]\","
             "\"replacement\": \"*\""
             "float example:\n"
@@ -151,8 +202,19 @@ def create_system_prompt(
 
 def ask_for_float(llm: Small_LLM_Model,
                   input_ids: List[int], masks: Dict[str, Set[int]],
-                  vocab: Dict[int, str], stop_tokens: set[int]) -> List[int]:
-    """asks the model for a float"""
+                  vocab: Dict[int, str], stop_tokens: set[int]) -> None:
+    """asks the model for a float and restricts it to limited set of tokens
+
+    Args:
+        llm (Small_LLM_Model): the model to use for the generation
+        input_ids (List[int]): the input ids to use for the generation
+        masks (Dict[str, Set[int]]): the masks to use for the generation
+        vocab (Dict[int, str]): the vocabulary to use for the generation
+        stop_tokens (set[int]): the stop tokens to use for the generation
+
+    Returns:
+        None
+    """
     state = "START"
 
     digits_and_end: Set[int] = masks['digits'] | stop_tokens
@@ -193,13 +255,22 @@ def ask_for_float(llm: Small_LLM_Model,
                 state = "DECIMAL_PART"
 
         input_ids.append(best_natural)
-    return input_ids
 
 
 def ask_for_int(llm: Small_LLM_Model,
                 input_ids: List[int], masks: Dict[str, Set[int]],
-                stop_tokens: set[int]) -> List[int]:
-    """asks the model for an int"""
+                stop_tokens: set[int]) -> None:
+    """asks the model for an int and restricts it to limited set of tokens
+
+    Args:
+        llm (Small_LLM_Model): the model to use for the generation
+        input_ids (List[int]): the input ids to use for the generation
+        masks (Dict[str, Set[int]]): the masks to use for the generation
+        stop_tokens (set[int]): the stop tokens to use for the generation
+
+    Returns:
+        None
+    """
     state = "START"
     allowed_indices: Set[int] = masks['digits_minus']
     has_digits = False
@@ -220,14 +291,22 @@ def ask_for_int(llm: Small_LLM_Model,
             allowed_indices = masks['digits'] | stop_tokens
             state = "BODY"
 
-    return input_ids
-
 
 def ask_for_str(llm: Small_LLM_Model,
                 input_ids: List[int],
                 masks_dict: Dict[str, Set[int]],
-                vocab: Dict[int, str]) -> List[int]:
-    """asks the model for a string"""
+                vocab: Dict[int, str]) -> None:
+    """asks the model for a string and restricts it to limited set of tokens
+
+    Args:
+        llm (Small_LLM_Model): the model to use for the generation
+        input_ids (List[int]): the input ids to use for the generation
+        masks_dict (Dict[str, Set[int]]): the masks to use for the generation
+        vocab (Dict[int, str]): the vocabulary to use for the generation
+
+    Returns:
+        None
+    """
     quote_ids = llm.encode('"')
     input_ids.extend(quote_ids)
     valid_indexes = np.array(list(masks_dict['valid_str_chars']), dtype=int)
@@ -244,12 +323,20 @@ def ask_for_str(llm: Small_LLM_Model,
             break
         input_ids.append(next_token)
     input_ids.extend(quote_ids)
-    return input_ids
 
 
 def start_generation(combined_data: Dict[str,
                      List[Dict[str, str]]]) -> List[Dict[str, Any]]:
-    """Start the model generation"""
+    """Start the model generation and return the result,
+    a list of all prompts results
+
+    Args:
+        combined_data (Dict[str, List[Dict[str, str]]]): the
+        data provided in the json file
+
+    Returns:
+        List[Dict[str, Any]]: the result of the generation
+    """
     final_result: List[Dict[str, Any]] = []
     llm = Small_LLM_Model()
     vocab_path: str = llm.get_path_to_vocabulary_json()

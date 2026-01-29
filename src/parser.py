@@ -4,14 +4,28 @@ from typing_extensions import Self
 
 
 class FunctionCall(BaseModel):
+    """Function call class, used to validate
+    the function calls in the json file"""
     prompt: str
 
 
 class FunctionCallsValidator(BaseModel):
+    """class to check a list of function calls, used to validate
+    all the function calls in the json file"""
     items: List[FunctionCall]
 
 
 class FunctionDefinition(BaseModel):
+    """Function definition class, used to validate
+    the function definitions in the json file.
+
+    Attributes:
+        fn_name (str): The name of the function.
+        args_names (List[str]): A list of argument names.
+        args_types (Dict[str, str]): A dictionary mapping argument
+        names to their types.
+        return_type (str): The return type of the function.
+    """
     fn_name: str
     args_names: List[str]
     args_types: Dict[str, str]
@@ -19,6 +33,11 @@ class FunctionDefinition(BaseModel):
 
     @model_validator(mode='after')
     def check_args(self) -> Self:
+        """Checks if the function definition is valid
+
+        Returns:
+            Self: the instance calling the function
+        """
         names_set = set(self.args_names)
         types_set = set(self.args_types.keys())
 
@@ -39,4 +58,6 @@ class FunctionDefinition(BaseModel):
 
 
 class FunctionDefinitionsValidator(BaseModel):
+    """class the check a list of function definitions, used to validate
+    all the function definitions in the json file"""
     items: List[FunctionDefinition]
