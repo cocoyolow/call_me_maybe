@@ -34,15 +34,12 @@ def validate_args(argv: List[str], argc: int) -> Tuple[Path, Path]:
     Returns:
         Path, Path: the two paths
     """
-    path_input: Path
-    path_output: Path
-
+    path_input: Path = Path(__file__).parent.parent / 'data' / 'input' / \
+        'function_calling_tests.json'
+    path_output: Path = Path(__file__).parent.parent / 'data' / 'output' / \
+        'function_calling_results.json'
     if argc == 2 or argc == 4:
         exit_wrong_format()
-    if argc == 1:
-        path_input = Path(__file__).parent.parent / 'data' / 'input'
-        path_output = Path(__file__).parent.parent / 'data' / 'output'
-
     elif argc == 3:
         if sys.argv[1] == '--input':
             path_input = Path(sys.argv[2])
@@ -80,14 +77,15 @@ def main() -> None:
 
     data: Dict[str, List[Dict[str, Any]]] = {}
     try:
-        json_calls_path = path_input / 'function_calling_tests.json'
+        json_calls_path = path_input
         with open(json_calls_path, 'r') as f:
             file_info = json.load(f)
             FunctionCallsValidator(items=file_info)
             print('function call json [OK]')
             data['calls'] = file_info
 
-        json_defs_path = path_input / 'functions_definition.json'
+        json_defs_path: Path = Path(__file__).parent.parent / \
+            'data' / 'input' / "functions_definition.json"
         with open(json_defs_path, 'r') as f:
             file_info = json.load(f)
             FunctionDefinitionsValidator(items=file_info)
@@ -104,9 +102,9 @@ def main() -> None:
         sys.exit(1)
 
     try:
-        path_output.mkdir(parents=True, exist_ok=True)
+        path_output.parent.mkdir(parents=True, exist_ok=True)
         result: List[Dict[str, Any]] = start_generation(data)
-        with open(path_output / "function_calling_results.json", "w") as f:
+        with open(path_output, "w") as f:
             json.dump(result, f, indent=4)
 
     except Exception as e:
