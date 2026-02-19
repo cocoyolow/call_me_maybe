@@ -171,31 +171,9 @@ def create_system_prompt(
     Returns:
         str: the detailed system prompt
     """
-    # 1. Rôle
-    txt = "You are an expert data extraction agent."
-    txt += " Call the correct function with PRECISE arguments.\n"
-    txt += "enter ONLY the arg of the function\n"
-    txt += "example hello"
-
-    txt += "Available tools:\n"
-    for defi in definitions:
-        txt += f"- {defi['fn_name']}\n"
-
-    txt += ("\nSTRICT RULES:\n"
-            "1. **SOURCE STRING**: Copy the source string WORD-FOR-WORD "
-            "from the user prompt. Do NOT add '$' signs."
-            " Do NOT change numbers.\n"
-            "\nRegex Example:\n"
-            "'Replace vowels in \"Test\" with *'\n"
-            "{\"fn_substitute_string_with_regex\" = \"args\":"
-            "{\"source_string\": \"Test\", \"regex\": \"[aeiouAEIOU]\","
-            "\"replacement\": \"*\""
-            "float example:\n"
-            "'What is the square root of 16?'\n"
-            "{\"fn_name\": \"fn_get_square_root\", \"args\": {\"a\": 16.0"
-            "\nNow, answer the user query:\n"
-            f"User: {current_prompt}\n"
-            "Assistant: ")
+    txt = "choose one function:"
+    functions = ",".join([f["fn_name"] for f in definitions])
+    txt += f"\n{functions}"
 
     return txt
 
