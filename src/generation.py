@@ -4,7 +4,6 @@ import json
 import numpy as np
 import sys
 
-
 def json_to_dict(path: str) -> Any:
     """convert the json file to a dict
 
@@ -114,7 +113,8 @@ def get_function_name(llm: Small_LLM_Model,
     Returns:
         str: the name of the function
     """
-    candidate_sequences = [llm.encode(name) for name in allowed_names]
+    candidate_sequences = [llm.encode(name)[0].tolist()
+                           for name in allowed_names]
 
     active_indices = list(range(len(allowed_names)))
     pos = 0
@@ -160,7 +160,7 @@ def get_function_name(llm: Small_LLM_Model,
 
 
 def create_system_prompt(
-        definitions: List[Dict[str, Any]], current_prompt: str) -> str:
+        definitions: List[Dict[str, Any]]) -> str:
     """
     Creates a prompt optimized for accuracy with strict copying rules.
 
@@ -233,8 +233,10 @@ def ask_for_float(llm: Small_LLM_Model,
                 state = "DECIMAL_PART"
 
         input_ids.append(best_natural)
+        print(token_str, end='')
     if '.' not in result:
-        input_ids.extend(llm.encode('.0'))
+        input_ids.extend(llm.encode('.0')[0].tolist())
+        print(".0")
 
 
 def ask_for_int(llm: Small_LLM_Model,
@@ -287,7 +289,7 @@ def ask_for_str(llm: Small_LLM_Model,
     Returns:
         None
     """
-    quote_ids = llm.encode('"')
+    quote_ids = llm.encode('"')[0].tolist()
     input_ids.extend(quote_ids)
     valid_indexes = np.array(list(masks_dict['valid_str_chars']), dtype=int)
     while True:
@@ -319,54 +321,62 @@ def start_generation(combined_data: Dict[str,
     """
     final_result: List[Dict[str, Any]] = []
     llm = Small_LLM_Model()
-    vocab_path: str = llm.get_path_to_vocabulary_json()
+    vocab_path: str = llm.get_path_to_vocab_file()
     vocab: Dict[str, int] = json_to_dict(vocab_path)
     reversed_vocab: Dict[int, str] = reverse_dict(vocab)
-    COMMA = llm.encode(',')
-    PROMPT = llm.encode('{\n\t"prompt": ')
-    FN_NAME = llm.encode(',\n\t"fn_name": "')
-    ARGS_MES = llm.encode(',\n\t"args": {')
-    BRACE_CLOSE = llm.encode('}')
+    COMMA = llm.encode(',')[0].tolist()
+    PROMPT = llm.encode('{\n\t"prompt": ')[0].tolist()
+    FN_NAME = llm.encode(',\n\t"fn_name": "')[0].tolist()
+    ARGS_MES = llm.encode(',\n\t"args": {')[0].tolist()
+    BRACE_CLOSE = llm.encode('}')[0].tolist()
     masks_dict: Dict[str, set[int]] = get_masks(reversed_vocab)
     allowed_names: List[str] = []
     for y in range(len(combined_data['defs'])):
         allowed_names.append(combined_data['defs'][y]['fn_name'])
 
-    for i in range(len(combined_data['calls'])):
+    nb_prompts = len(combined_data['calls'])
+    for i in range(nb_prompts):
         cur_prompt: str = combined_data['calls'][i]['prompt']
-        prompt: str = create_system_prompt(combined_data['defs'],
-                                           cur_prompt)
-        input_ids: List[int] = llm.encode(prompt)
+        prompt: str = create_system_prompt(combined_data['defs'])
+        input_ids: List[int] = llm.encode(prompt)[0].tolist()
         generated_index = len(input_ids)
         input_ids.extend(PROMPT)
-        input_ids.extend(llm.encode(f'"{cur_prompt}"'))
+        escaped_prompt = json.dumps(cur_prompt)
+        print(f"prompt {i + 1}/{nb_prompts}: {escaped_prompt}")
+        input_ids.extend(llm.encode(escaped_prompt)[0].tolist())
         input_ids.extend(FN_NAME)
         name_result: str = get_function_name(
             llm, input_ids, allowed_names)
         function_name = name_result
-        input_ids.extend(llm.encode('"'))
+        input_ids.extend(llm.encode('"')[0].tolist())
         input_ids.extend(ARGS_MES)
-        print("function:", function_name)
+        print("\t   - > detected function:", function_name, "\n")
         function_index: int = allowed_names.index(function_name)
         function: Dict[str, Any] = combined_data['defs'][function_index]
         stop_tokens = {k for k, v in reversed_vocab.items() if v in [",", "}",
                                                                      "\n"]}
         for arg in function['args_names']:
-            input_ids.extend(llm.encode(f'"{arg}": '))
+            input_ids.extend(llm.encode(f'"{arg}": ')[0].tolist())
             match function['args_types'][arg]:
-                case 'float':
+                case 'number':
+                    print(f"{arg} (number): ")
                     ask_for_float(
                         llm, input_ids, masks_dict, reversed_vocab,
                         stop_tokens)
-                case 'int':
+                case 'integer':
+                    print(f"{arg} (integer): ")
                     ask_for_int(
                         llm, input_ids, masks_dict, stop_tokens)
-                case 'str':
+                case 'string':
+                    print(f"{arg} (string): ")
                     ask_for_str(llm, input_ids, masks_dict, reversed_vocab)
+                case _:
+                    print(f"Error: unknown type {function['args_types'][arg]}")
+
             if arg != function['args_names'][-1]:
                 input_ids.extend(COMMA)
         input_ids.extend(BRACE_CLOSE)
-        input_ids.extend(llm.encode("\n}"))
+        input_ids.extend(llm.encode("\n}")[0].tolist())
         # import time as t
         final_result.append(json.loads(
             llm.decode(input_ids[generated_index:])))
