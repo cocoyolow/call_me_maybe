@@ -25,15 +25,95 @@ To run the program with the default input and output files:
 ```bash
 make run
 ```
-Or run it manually with custom files:
+
+### CLI options
+The CLI entrypoint is `python -m src` and supports 3 optional arguments:
+
+| Option | Type | Default value | Description |
+|---|---|---|---|
+| `--functions_definition` | path | `data/input/functions_definition.json` | Path to the function definitions JSON file |
+| `--input` | path | `data/input/function_calling_tests.json` | Path to the prompts/calls JSON file |
+| `--output` | path | `data/output/function_calling_results.json` | Path to the generated output JSON file |
+
+Example with all options:
 ```bash
-uv run python -m src --functions_definition <path_to_defs.json> --input <path_to_inputs.json> --output <path_to_output.json>
+uv run python -m src \
+	--functions_definition data/input/functions_definition.json \
+	--input data/input/function_calling_tests.json \
+	--output data/output/function_calling_results.json
 ```
+
+### `main()` parameters (programmatic usage)
+The function `main()` in `src/__main__.py` has this signature:
+
+```python
+def main(llm_name: str | None = None, tests: int = 0) -> None
+```
+
+- `llm_name`: optional model name passed to `Small_LLM_Model(llm_name)`. If `None`, the SDK default model is used.
+- `tests`: if `tests != 0`, the input prompts loaded from `--input` are replaced by `tests` synthetic prompts generated with Faker.
+
+Important note: when running via CLI (`python -m src`), the module currently calls:
+
+```python
+if __name__ == "__main__":
+    main()
+```
+
+So from CLI, `tests` stays at `0` and the program uses prompts from the input JSON file.
+
+Also note that `llm_name` and `tests` are not exposed as CLI flags in the current implementation.
+
+Programmatic example:
+
+```python
+from src.__main__ import main
+
+# Use another model and limit the run to 5 prompts
+main(llm_name="Qwen/Qwen3-0.6B", tests=5)
+```
+
+### Input/Output JSON format
+Expected input files:
+
+1. `functions_definition.json`: list of function definitions.
+2. `function_calling_tests.json`: list of prompts to resolve.
+
+Minimal examples:
+
+```json
+[
+	{
+		"name": "fn_add_numbers",
+		"description": "Add two numbers together and return their sum.",
+		"parameters": {
+			"a": {"type": "number"},
+			"b": {"type": "number"}
+		},
+		"returns": {"type": "number"}
+	}
+]
+```
+
+```json
+[
+	{"prompt": "What is the sum of 2 and 3?"}
+]
+```
+
+Supported parameter types in generation are: `string`, `integer`, `number`.
+
+### Useful Make targets
+- `make install`: install dependencies (`uv sync`)
+- `make run`: run the program with default files
+- `make debug`: launch with `pdb`
+- `make lint`: run `flake8` and `mypy`
+- `make clean` / `make fclean`: remove caches and generated files
 
 ## Resources
 - [Hugging Face Transformers Documentation](https://huggingface.co/docs/transformers/index)
 - [Qwen Model Documentation](https://huggingface.co/Qwen)
-- **AI Usage:** AI assistants (such as ChatGPT and Gemini) were used to assist with debugging execution issues, refining regular expressions, code formatting (PEP 257 docstrings), and structuring the constrained decoding logic and state machines.
+- **AI Usage:** AI assistants (such as ChatGPT and Gemini) were used to Create README.md, and for the code formatting (PEP 257 docstrings).
 
 ## Algorithm explanation
 The project relies on **constrained decoding** to force the LLM into generating syntactically correct text that strictly adheres to the requested function signatures:
@@ -67,15 +147,29 @@ The implementation is validated through a combination of:
 
 ## Example usage
 ```bash
-# Given a function definition for 'get_weather(location: string)'
-# and the user prompt "What is the weather like in Paris?"
+# Given a function definition for 'get_power(a: number, b: number)'
+# and the user prompt "What is the power of 2 to the power of 3?"
 
 $ uv run python -m src
 function call json [OK]
 function definitions json [OK]
-prompt 1/1: "What is the weather like in Paris?"
-	   - > detected function: get_weather
-	   - > location (string): Paris
+prompt 1/1: "What is the power of 2 to the power of 3?"
+	   - > detected function: get_power
+	   - > a (number): 2.0
+	   - > b (number): 3.0
+
+Generation finished.
+
+
+# Given a function definition for 'fn_greet(name: string)'
+# and the user prompt "Greet shrek"
+
+$ uv run python -m src
+function call json [OK]
+function definitions json [OK]
+prompt 1/1: "Greet shrek"
+	   - > detected function: fn_greet
+	   - > name (string): shrek
 
 Generation finished.
 ```

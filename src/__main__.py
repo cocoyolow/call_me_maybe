@@ -113,4 +113,4 @@ def main(llm_name: str | None = None, tests: int = 0) -> None:
 
 
 if __name__ == "__main__":
-    main(tests=20)
+    main()
