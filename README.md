@@ -1,111 +1,81 @@
 *This project has been created as part of the 42 curriculum by cobussie.*
 
 # Call Me Maybe
-**Introduction to function calling in LLMs**
 
 ## Description
-This project implements a robust **constrained decoding** mechanism for Large Language Models (LLMs) to perform reliable function calling. The goal is to address the stochastic nature of LLMs, which often leads to "hallucinations" or syntactically incorrect outputs when asked to generate structured data like JSON.
-
-By intercepting the model's generation process and strictly enforcing token constraints based on function signatures, this tool ensures that the model outputs function calls that are not only syntactically valid JSON but also adhere to the specific argument types (integers, floats, strings) defined by the user.
+**Call Me Maybe** is an introduction to function calling in Large Language Models (LLMs). The goal of this project is to implement constrained decoding techniques to enforce an LLM to generate precise JSON outputs corresponding to predefined function signatures. It uses a lightweight local model (`Qwen/Qwen3-0.6B`) and ensures that the model only produces valid function names and correctly typed arguments (strings, integers, floats) according to the provided system prompts.
 
 ## Instructions
+### Prerequisites
+- Python 3.10+
+- `uv` package manager
+- `make`
 
 ### Installation
-This project manages dependencies using `uv`. To install the necessary environment and dependencies, run:
-
+Clone the repository and install the dependencies using the provided Makefile:
 ```bash
+git clone <repository_url>
+cd call_me_maybe
 make install
 ```
+This will run `uv sync` to set up the virtual environment and install all dependencies.
 
 ### Execution
-To run the main program with the default dataset:
-
+To run the program with the default input and output files:
 ```bash
 make run
 ```
-
-This command executes `src/__main__.py`, which processes input prompts and function definitions, generates constrained responses, and saves the results.
-
-#### Custom Usage
-You can specify custom input and output paths using the CLI arguments:
-
+Or run it manually with custom files:
 ```bash
-uv run python3 -m src --input <path_to_input_dir> --output <path_to_output_dir>
+uv run python -m src --functions_definition <path_to_defs.json> --input <path_to_inputs.json> --output <path_to_output.json>
 ```
-
-### Linting
-To check the code for style and type errors:
-
-```bash
-make lint
-```
-
-## Algorithm Explanation
-The core of this solution lies in **constrained decoding**, implemented in `src/generation.py`. Instead of letting the LLM freely predict the next token, we intervene at the logit level:
-
-1.  **Masking**: We categorize tokens into specific sets (e.g., `digits`, `digits_minus`, `valid_str_chars`) using `get_masks`.
-2.  **State Machines**: When the model needs to generate a specific type (e.g., a float), we enter a finite state machine (FSM).
-    *   *Example (Float)*: The FSM allows a minus sign, then digits, then a single dot, then more digits. It strictly forbids invalid sequences like `1.2.3` or `--5`.
-3.  **Trie-like Search for Function Names**: The `get_function_name` function pre-calculates valid token sequences for all allowed function names. It then forces the model to follow one of these valid paths, effectively treating the function name selection as a trie traversal.
-4.  **Direct Logit Manipulation**: At each step, we permit only the tokens allowed by the current state or mask, setting the probabilities of all other tokens to negative infinity.
-
-## Design Decisions
-*   **Modular Architecture**: The project is structured for separation of concerns:
-    *   `src/parser.py`: Handles data validation using Pydantic models.
-    *   `src/generation.py`: Contains the low-level constrained decoding logic.
-    *   `src/__main__.py`: Manages the application flow and CLI.
-*   **Pydantic for Validation**: We use Pydantic to strictly validate input JSON files (`functions_definition.json` and `function_calling_tests.json`) before processing, ensuring the system never crashes due to malformed input.
-*   **Zero-Temperature equivalent**: By always selecting the `argmax` of valid logits, we ensure deterministic outputs, which is crucial for reliable testing and debugging.
-
-## Performance Analysis
-*   **Accuracy**:
-    *   **100% Valid JSON**: The solution achieves **100% syntactic correctness** for the supported primitive types (int, float, str). The strict masking makes it impossible for the model to generate invalid JSON structure or type mismatches.
-    *   **>95% Semantic Accuracy**: We achieve a high success rate in generating the *correct* function call and arguments (over 95%). This is bolstered by a carefully engineered system prompt that increases the likelihood of high-quality responses.
-*   **Speed**:
-    *   **Optimized Name Matching**: The `get_function_name` optimization significantly speeds up generation by avoiding the need to sample and validate tokens one by one for long function names.
-    *   **Token efficiency**: Since we force the correct path, we avoid "retry" loops often found in prompt-engineering-based solutions.
-
-## Challenges Faced
-*   **String Handling and Quoting**: Converting arbitrary model output into a valid JSON string is non-trivial. The model might attempt to generate unescaped quotes or terminate the string early. We tackled this by strictly controlling valid string characters and ensuring the model cannot "overflow" the string definition or inject invalid JSON syntax (like multiple quotes).
-*   **Tokenization Artifacts**: Different tokenizers represent characters differently (e.g., the `Ġ` prefix for spaces in some byte-pair encodings). Handling these variations when building our allowable sets was critical.
-*   **Floating Point Representation**: Ensuring a valid float representation (preventing multiple dots, ensuring digits after a dot, handling leading zeros/minus signs) required a precise state machine implementation.
-*   **Mapping High-Level Types**: Bridging the gap between a high-level JSON schema type (like "number") and the low-level vocabulary IDs of the LLM required careful mapping and pre-computation of valid token sets.
-
-## Testing Strategy
-*   **Input Validation**: We use `FunctionCallsValidator` and `FunctionDefinitionsValidator` to enforce strict schema compliance on inputs.
-*   **Output Verification**: The final output is verified to be valid JSON. The determinism of the constrained decoding allows us to predictably test edge cases (like negative numbers or strings with special characters) without flakiness.
-*   **Manual Review**: We inspect the generated `function_calling_results.json` to ensure the logic semantically matches the user prompt.
-
-## Example Usage
-Given a function definition like:
-{
-  "fn_name": "get_weather",
-  "args_names": ["location", "days"],
-  "args_types": {"location": "str", "days": "int"},
-  "return_type": "str"
-}
-
-And a prompt: *"What is the weather in Paris for the next 3 days?"*
-
-The system forces the LLM to generate:
-
-{
-    "prompt": "What is the weather in Paris for the next 3 days?",
-    "fn_name": "get_weather",
-    "args": {
-        "location": "Paris",
-        "days": 3
-    }
-}
-
-All without the possibility of syntax errors or type hallucinations.
 
 ## Resources
-*   **Guidance on Constrained Decoding**: *Hugging Face Blog - Constrained Beam Search* (conceptually similar).
-*   **Pydantic Documentation**: For robust data validation.
-*   **LLM SDK**: The internal `llm_sdk` provided the base `Small_LLM_Model` class used for tokenization and inference.
+- [Hugging Face Transformers Documentation](https://huggingface.co/docs/transformers/index)
+- [Qwen Model Documentation](https://huggingface.co/Qwen)
+- **AI Usage:** AI assistants (such as ChatGPT and Gemini) were used to assist with debugging execution issues, refining regular expressions, code formatting (PEP 257 docstrings), and structuring the constrained decoding logic and state machines.
 
-### AI Usage
-AI was used in this project to:
-*   **Draft Documentation**: Generative AI assisted in structuring and writing this README.md to ensure clarity and completeness.
-*   **Algorithm Refinement**: AI provided suggestions for optimizing the function name matching logic.
+## Algorithm explanation
+The project relies on **constrained decoding** to force the LLM into generating syntactically correct text that strictly adheres to the requested function signatures:
+- **Function Name Generation:** Instead of letting the model free-generate text, we pre-calculate valid token sequences for all allowed function names. During generation, we restrict the model's logits to only allow tokens that progress toward one of the valid function names.
+- **Parameter Value Generation:** We dynamically apply masks (allow-lists of token IDs) based on the parameter type:
+  - For `integer`, only digits and a minus sign are allowed initially, followed by stop tokens (like commas or braces).
+  - For `number` (float), we use a state machine (`START`, `INT_PART`, `AFTER_DOT`, `DECIMAL_PART`) to ensure that the generated output strictly forms a valid floating-point number.
+  - For `string`, we restrict the tokens to a set of valid string characters and stop at the closing quote.
+
+## Design decisions
+- **Pydantic Validation:** Used `pydantic` to rigorously validate input function definitions and input queries, ensuring the JSON data is structurally sound before passing it to the LLM.
+- **Token Masking:** By passing valid subsets of the vocabulary to `numpy.argmax`, we override the LLM's natural tendency to generate conversational padding.
+- **State Machines:** Managing state during numerical decoding ensures that malformed numbers (like `12.34.56`) cannot be generated.
+- **uv over pip:** `uv` is used for extremely fast dependency management and reproducible environments, keeping the runtime execution deterministic.
+
+## Performance analysis
+- **Accuracy:** Due to the strict constrained decoding approach, the structural accuracy of the generated JSON is virtually 100%. The model mathematically cannot output an invalid function name or malformed numbers/strings.
+- **Speed:** Limiting the vocabulary mask at each step introduces a slight CPU overhead during the logits evaluation, but prevents the model from generating long, unnecessary conversational outputs, drastically improving the overall token-generation speed compared to unconstrained completion.
+- **Reliability:** By handling exceptions and invalid JSON structures safely, the pipeline ensures uninterrupted batch processing without crashing midway through generation.
+
+## Challenges faced
+- **Tokenization Quirks:** Handling subword tokenization meant that some characters might be merged, or spaces might be prepended. Reconstructing exact strings and ensuring digits or special characters are accurately parsed required building inverse vocabularies and careful token matching.
+- **Mypy and Local Modules:** Dealing with static typing issues related to a shadowed local `llm_sdk` directory required bypassing static analyzer limitations while keeping runtime imports fully functional.
+- **State Management:** Tracking the exact state of float generation (e.g., distinguishing between negative signs and decimal points) required precise logic to avoid infinite generation loops or illegal formats.
+
+## Testing strategy
+The implementation is validated through a combination of:
+1. **Pydantic Validation:** Every input parsed is validated for strictly matching the expected schema.
+2. **Automated Linting:** Code is tested against strict typing using `mypy` and PEP 8 correctness using `flake8` (`make lint`).
+3. **End-to-End Tests:** We pass a bulk set of varied mock prompts and evaluate the valid output JSON format to ensure the constrained decoding never breaks under various edge cases, including empty strings, large numbers, special characters, wrong types, ambiguous prompts, and functions with multiple parameters.
+
+## Example usage
+```bash
+# Given a function definition for 'get_weather(location: string)'
+# and the user prompt "What is the weather like in Paris?"
+
+$ uv run python -m src
+function call json [OK]
+function definitions json [OK]
+prompt 1/1: "What is the weather like in Paris?"
+	   - > detected function: get_weather
+	   - > location (string): Paris
+
+Generation finished.
+```

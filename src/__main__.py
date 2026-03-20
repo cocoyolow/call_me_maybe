@@ -8,11 +8,7 @@ from typing import Dict, List, Any, Tuple
 
 
 def exit_wrong_format() -> None:
-    """Prints an error message telling the user how to use the program,
-    and exits the program
-
-    Args:
-        None
+    """Print an error message telling the user how to use the program and exit.
 
     Returns:
         None
@@ -24,13 +20,13 @@ def exit_wrong_format() -> None:
 
 
 def validate_args() -> Tuple[Path, Path, Path]:
-    """Validates and parses the arguments passed to the program.
+    """Validate and parse the arguments passed to the program.
+
     Uses argparse to handle optional arguments in any order.
 
     Returns:
-        Tuple[Path, Path, Path]:
-        the paths for
-        functions_definition, input, and output
+        Tuple[Path, Path, Path]: The paths for functions_definition, input, and
+            output.
     """
     import argparse
     base_dir = Path(__file__).parent.parent
@@ -63,11 +59,12 @@ def validate_args() -> Tuple[Path, Path, Path]:
     return args.functions_definition, args.input, args.output
 
 
-def main(llm_name: str | None = None) -> None:
-    """Start the Call Me Maybe program
+def main(llm_name: str | None = None, tests: int = 0) -> None:
+    """Start the Call Me Maybe program.
 
     Args:
-        None
+        llm_name (str | None): The name of the LLM to use. Defaults to None.
+        tests (int): The number of tests to run. Defaults to 0.
 
     Returns:
         None
@@ -105,7 +102,7 @@ def main(llm_name: str | None = None) -> None:
 
     try:
         path_output.parent.mkdir(parents=True, exist_ok=True)
-        result: List[Dict[str, Any]] = start_generation(data, llm_name)
+        result: List[Dict[str, Any]] = start_generation(data, llm_name, tests)
         with open(path_output, "w") as f:
             json.dump(result, f, indent=4)
 
@@ -116,4 +113,4 @@ def main(llm_name: str | None = None) -> None:
 
 
 if __name__ == "__main__":
-    main()
+    main(tests=20)

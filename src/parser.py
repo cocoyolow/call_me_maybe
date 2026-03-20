@@ -31,8 +31,8 @@ class FunctionDefinition(BaseModel):
     Attributes:
         name (str): The name of the function.
         description (str): The description of the function.
-        parameters (Dict[str, ParameterDetail]): A dictionary mapping argument
-        names to their details (like type).
+        parameters (Dict[str, ParameterDetail]): A dictionary mapping
+            argument names to their details.
         returns (ReturnDetail): The return type details of the function.
     """
     name: str
@@ -42,6 +42,5 @@ class FunctionDefinition(BaseModel):
 
 
 class FunctionDefinitionsValidator(BaseModel):
-    """class the check a list of function definitions, used to validate
-    all the function definitions in the json file"""
+    """Validate a list of all function definitions in the JSON file."""
     items: List[FunctionDefinition]

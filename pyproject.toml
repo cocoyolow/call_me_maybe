@@ -5,6 +5,7 @@ description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
+    "faker>=40.11.0",
     "flake8>=7.3.0",
     "llm-sdk>=1.0.1",
     "mypy>=1.19.1",

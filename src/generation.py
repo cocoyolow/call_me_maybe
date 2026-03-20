@@ -1,12 +1,12 @@
 from typing import Dict, List, Tuple, Any, Set
-from llm_sdk import Small_LLM_Model
+from llm_sdk import Small_LLM_Model  # type: ignore
 import json
 import numpy as np
 import sys
 
 
 def json_to_dict(path: str) -> Any:
-    """convert the json file to a dict
+    """Convert the JSON file to a dictionary.
 
     Args:
         path (str): path to the json file
@@ -38,8 +38,8 @@ def reverse_dict(vocab: Dict[str, int]) -> Dict[int, str]:
 
 def create_vocab_buckets(vocab: Dict[str, int]) -> \
         Dict[str, List[Tuple[int, str]]]:
-    """
-    Create a dictionary of buckets based on the first character of the tokens.
+    """Create a dictionary of buckets based on the first character of
+    the tokens.
 
     Args:
         vocab (Dict[str, int]): the vocabulary to create the buckets from
@@ -59,9 +59,10 @@ def create_vocab_buckets(vocab: Dict[str, int]) -> \
 
 
 def get_masks(vocab: Dict[int, str]) -> Dict[str, Set[int]]:
-    """Returns a dictionary with the masks for each type of token
-    the masks are used to restrict the generation of the model,
-    thus optimise performance and accuracy
+    """Return a dictionary with the masks for each type of token.
+
+    The masks are used to restrict the generation of the model,
+    thus optimise performance and accuracy.
 
     Args:
         vocab (Dict[int, str]): the vocabulary to create the masks from
@@ -101,10 +102,11 @@ def get_masks(vocab: Dict[int, str]) -> Dict[str, Set[int]]:
 
 def get_function_name(llm: Small_LLM_Model,
                       input_ids: List[int], allowed_names: List[str]) -> str:
-    """
-    Ultra-optimized function name generation.
+    """Generate an ultra-optimized function name.
+
     Pre-calculates valid token sequences and follows them.
-    fills the input_ids with the tokens of the result
+    Fills the input_ids with the tokens of the result.
+
     Args:
         llm (Small_LLM_Model): the model to use for the generation
         input_ids (List[int]): the input ids to use for the generation
@@ -161,12 +163,10 @@ def get_function_name(llm: Small_LLM_Model,
 
 def create_system_prompt(
         definitions: List[Dict[str, Any]]) -> str:
-    """
-    Creates a prompt optimized for accuracy with strict copying rules.
+    """Create a prompt optimized for accuracy with strict copying rules.
 
     Args:
         definitions (List[Dict[str, Any]]): the function definitions
-        current_prompt (str): the current prompt
 
     Returns:
         str: the detailed system prompt
@@ -179,8 +179,7 @@ def create_system_prompt(
 
 
 def create_single_function_context(func_def: Dict[str, Any]) -> str:
-    """
-    Creates the context for a single function.
+    """Create the context for a single function.
 
     Args:
         func_def (Dict[str, Any]): the function definition
@@ -203,7 +202,7 @@ def create_single_function_context(func_def: Dict[str, Any]) -> str:
 def ask_for_float(llm: Small_LLM_Model,
                   input_ids: List[int], masks: Dict[str, Set[int]],
                   vocab: Dict[int, str], stop_tokens: set[int]) -> None:
-    """asks the model for a float and restricts it to limited set of tokens
+    """Ask the model for a float and restrict it to a limited set of tokens.
 
     Args:
         llm (Small_LLM_Model): the model to use for the generation
@@ -269,7 +268,7 @@ def ask_for_float(llm: Small_LLM_Model,
 def ask_for_int(llm: Small_LLM_Model,
                 input_ids: List[int], masks: Dict[str, Set[int]],
                 stop_tokens: set[int]) -> None:
-    """asks the model for an int and restricts it to limited set of tokens
+    """Ask the model for an int and restrict it to a limited set of tokens.
 
     Args:
         llm (Small_LLM_Model): the model to use for the generation
@@ -310,7 +309,7 @@ def ask_for_str(llm: Small_LLM_Model,
                 input_ids: List[int],
                 masks_dict: Dict[str, Set[int]],
                 vocab: Dict[int, str]) -> None:
-    """asks the model for a string and restricts it to limited set of tokens
+    """Ask the model for a string and restrict it to a limited set of tokens.
 
     Args:
         llm (Small_LLM_Model): the model to use for the generation
@@ -345,15 +344,41 @@ def ask_for_str(llm: Small_LLM_Model,
     input_ids.extend(quote_ids)
 
 
-def start_generation(combined_data: Dict[str,
-                     List[Dict[str, str]]],
-                     llm_name: str | None = None) -> List[Dict[str, Any]]:
-    """Start the model generation and return the result,
-    a list of all prompts results
+def generate_prompts(test_count: int) -> List[Dict[str, str]]:
+    """Generate the prompts to use for the generation using real words.
 
     Args:
-        combined_data (Dict[str, List[Dict[str, str]]]): the
-        data provided in the json file
+        test_count (int): the number of tests to generate
+
+    Returns:
+        List[Dict[str, str]]: the prompts to use for the generation
+    """
+    from faker import Faker
+    import random
+    prompts = []
+    fake = Faker('en_US')
+
+    for _ in range(test_count):
+        prompts.append({
+            "prompt": fake.sentence(nb_words=random.randint(4, 25))
+        })
+    return prompts
+
+
+def start_generation(combined_data: Dict[str,
+                     List[Dict[str, str]]],
+                     llm_name: str | None = None,
+                     test_count: int = 0) -> List[Dict[str, Any]]:
+    """Start the model generation and return the result.
+
+    Returns a list of all prompts results.
+
+    Args:
+        combined_data (Dict[str, List[Dict[str, str]]]): the data provided in
+            the json file
+        llm_name (str | None): the name of the llm to use
+        test_count (int): the number of tests to generate to verify that
+            the generation is correct
 
     Returns:
         List[Dict[str, Any]]: the result of the generation
@@ -382,6 +407,9 @@ def start_generation(combined_data: Dict[str,
     for y in range(len(combined_data['defs'])):
         allowed_names.append(combined_data['defs'][y]['name'])
 
+    if test_count != 0:
+        prompts = generate_prompts(test_count)
+        combined_data['calls'] = prompts
     nb_prompts = len(combined_data['calls'])
     for i in range(nb_prompts):
         cur_prompt: str = combined_data['calls'][i]['prompt']
@@ -400,12 +428,19 @@ def start_generation(combined_data: Dict[str,
         input_ids.extend(PARAMETERS)
 
         print(f"\033[92m{PADDING}detected function: {function_name}\033[0m")
+
         function_index: int = allowed_names.index(function_name)
+
         function: Dict[str, Any] = combined_data['defs'][function_index]
+
         fn_context_str: str = create_single_function_context(function)
+
         fn_context: list[int] = llm.encode(fn_context_str)[0].tolist()
+
         context_index = len(fn_context)
+
         input_ids = fn_context + input_ids
+
         parameters = function['parameters']
         arg_names = list(parameters.keys())
         for arg in arg_names:
