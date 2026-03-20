@@ -4,6 +4,7 @@ import json
 import numpy as np
 import sys
 
+
 def json_to_dict(path: str) -> Any:
     """convert the json file to a dict
 
@@ -78,13 +79,12 @@ def get_masks(vocab: Dict[int, str]) -> Dict[str, Set[int]]:
     }
 
     for t_id, raw_t_str in vocab.items():
-        t_str = raw_t_str.replace('Ġ', '').strip()
+        t_str = raw_t_str.replace('Ġ', ' ')
         if not t_str:
             continue
 
         if not ('"' in t_str and t_str[-1] != '"'):
-            if "\\" not in t_str:
-                masks['valid_str_chars'].add(t_id)
+            masks['valid_str_chars'].add(t_id)
 
         if all(c in "0123456789" for c in t_str):
             masks['digits'].add(t_id)
@@ -171,10 +171,32 @@ def create_system_prompt(
     Returns:
         str: the detailed system prompt
     """
-    txt = "choose one function:"
-    functions = ",".join([f["fn_name"] for f in definitions])
-    txt += f"\n{functions}"
+    txt = "Available functions:\n"
+    for f in definitions:
+        txt += f"- {f['name']}\n"
+    txt += "\nchoose one function:"
+    return txt
 
+
+def create_single_function_context(func_def: Dict[str, Any]) -> str:
+    """
+    Creates the context for a single function.
+
+    Args:
+        func_def (Dict[str, Any]): the function definition
+
+    Returns:
+        str: the context for the function
+    """
+    txt = f"Function {func_def['name']}:\n"
+    if 'description' in func_def:
+        txt += f"Description: {func_def['description']}\n"
+    txt += "Parameters:\n"
+    for param_name, param_info in func_def.get('parameters', {}).items():
+        desc = param_info.get('description', '')
+        txt += f"- {param_name} ({param_info.get('type')}): {desc}\n"
+
+    txt += "\nGenerate arguments for this function:"
     return txt
 
 
@@ -198,12 +220,14 @@ def ask_for_float(llm: Small_LLM_Model,
     digits_and_end: Set[int] = masks['digits'] | stop_tokens
     digits_dot_and_end: Set[int] = masks['digits_dot'] | stop_tokens
     allowed_indices = set()
-
+    nb_tokens: int = 0
     while True:
+        if nb_tokens > 200:
+            break
         if state == "START":
             allowed_indices = masks['digits_minus']
         elif state == "AFTER_MINUS":
-            allowed_indices = masks['digits_dot']
+            allowed_indices = masks['digits']
         elif state == "INT_PART":
             allowed_indices = digits_dot_and_end
         elif state == "AFTER_DOT":
@@ -227,16 +251,19 @@ def ask_for_float(llm: Small_LLM_Model,
         elif token_str == ".":
             state = "AFTER_DOT"
         elif token_str.isdigit():
-            if state == "START" or state == "INT_PART":
+            if state == "START" \
+                    or state == "INT_PART" \
+                    or state == "AFTER_MINUS":
                 state = "INT_PART"
             elif state == "AFTER_DOT" or state == "DECIMAL_PART":
                 state = "DECIMAL_PART"
 
+        nb_tokens += 1
         input_ids.append(best_natural)
         print(token_str, end='')
     if '.' not in result:
         input_ids.extend(llm.encode('.0')[0].tolist())
-        print(".0")
+        print(".0", end='')
 
 
 def ask_for_int(llm: Small_LLM_Model,
@@ -253,10 +280,13 @@ def ask_for_int(llm: Small_LLM_Model,
     Returns:
         None
     """
+    nb_tokens: int = 0
     state = "START"
     allowed_indices: Set[int] = masks['digits_minus']
     has_digits = False
     while True:
+        if nb_tokens > 200:
+            break
         logits = llm.get_logits_from_input_ids(input_ids)
 
         next_token = max(allowed_indices, key=lambda i: logits[i])
@@ -267,8 +297,10 @@ def ask_for_int(llm: Small_LLM_Model,
         if has_digits and next_token in stop_tokens:
             break
 
+        token_str = llm.decode(next_token)
         input_ids.append(next_token)
-
+        print(token_str, end='')
+        nb_tokens += 1
         if state != "BODY":
             allowed_indices = masks['digits'] | stop_tokens
             state = "BODY"
@@ -289,10 +321,13 @@ def ask_for_str(llm: Small_LLM_Model,
     Returns:
         None
     """
+    nb_tokens: int = 0
     quote_ids = llm.encode('"')[0].tolist()
     input_ids.extend(quote_ids)
     valid_indexes = np.array(list(masks_dict['valid_str_chars']), dtype=int)
     while True:
+        if nb_tokens > 200:
+            break
         logits = np.array(llm.get_logits_from_input_ids(input_ids))
 
         local_index = int(np.argmax(logits[valid_indexes]))
@@ -300,15 +335,19 @@ def ask_for_str(llm: Small_LLM_Model,
         next_token = valid_indexes[local_index]
         token_str = vocab[next_token]
 
-        token_str = vocab[next_token].replace('Ġ', '').strip()
+        token_str = vocab[next_token].replace('Ġ', ' ')
         if token_str.endswith('"'):
             break
+        token_str_clean = token_str.replace('"', '')
+        nb_tokens += 1
+        print(token_str_clean, end='', flush=True)
         input_ids.append(next_token)
     input_ids.extend(quote_ids)
 
 
 def start_generation(combined_data: Dict[str,
-                     List[Dict[str, str]]]) -> List[Dict[str, Any]]:
+                     List[Dict[str, str]]],
+                     llm_name: str | None = None) -> List[Dict[str, Any]]:
     """Start the model generation and return the result,
     a list of all prompts results
 
@@ -319,71 +358,94 @@ def start_generation(combined_data: Dict[str,
     Returns:
         List[Dict[str, Any]]: the result of the generation
     """
+
     final_result: List[Dict[str, Any]] = []
-    llm = Small_LLM_Model()
+    if llm_name is None:
+        llm = Small_LLM_Model()
+    else:
+        llm = Small_LLM_Model(llm_name)
     vocab_path: str = llm.get_path_to_vocab_file()
     vocab: Dict[str, int] = json_to_dict(vocab_path)
     reversed_vocab: Dict[int, str] = reverse_dict(vocab)
     COMMA = llm.encode(',')[0].tolist()
+    PADDING = "\t   - > "
     PROMPT = llm.encode('{\n\t"prompt": ')[0].tolist()
-    FN_NAME = llm.encode(',\n\t"fn_name": "')[0].tolist()
-    ARGS_MES = llm.encode(',\n\t"args": {')[0].tolist()
+    FN_NAME = llm.encode(',\n\t"name": "')[0].tolist()
+    PARAMETERS = llm.encode(',\n\t"parameters": {')[0].tolist()
     BRACE_CLOSE = llm.encode('}')[0].tolist()
     masks_dict: Dict[str, set[int]] = get_masks(reversed_vocab)
     allowed_names: List[str] = []
+    stop_tokens = {k for k, v in reversed_vocab.items() if v in [",", "}",
+                                                                 "\n"]}
+    base_context: str = create_system_prompt(combined_data['defs'])
+    base_input_ids: List[int] = llm.encode(base_context)[0].tolist()
     for y in range(len(combined_data['defs'])):
-        allowed_names.append(combined_data['defs'][y]['fn_name'])
+        allowed_names.append(combined_data['defs'][y]['name'])
 
     nb_prompts = len(combined_data['calls'])
     for i in range(nb_prompts):
         cur_prompt: str = combined_data['calls'][i]['prompt']
-        prompt: str = create_system_prompt(combined_data['defs'])
-        input_ids: List[int] = llm.encode(prompt)[0].tolist()
-        generated_index = len(input_ids)
+        input_ids: List[int] = base_input_ids.copy()
+        context_index = len(input_ids)
         input_ids.extend(PROMPT)
         escaped_prompt = json.dumps(cur_prompt)
-        print(f"prompt {i + 1}/{nb_prompts}: {escaped_prompt}")
+        print(f"prompt {i + 1}/{nb_prompts}: \033[94m{escaped_prompt}\033[0m")
         input_ids.extend(llm.encode(escaped_prompt)[0].tolist())
         input_ids.extend(FN_NAME)
-        name_result: str = get_function_name(
+        function_name: str = get_function_name(
             llm, input_ids, allowed_names)
-        function_name = name_result
         input_ids.extend(llm.encode('"')[0].tolist())
-        input_ids.extend(ARGS_MES)
-        print("\t   - > detected function:", function_name, "\n")
+        input_ids = input_ids[context_index:]
+
+        input_ids.extend(PARAMETERS)
+
+        print(f"\033[92m{PADDING}detected function: {function_name}\033[0m")
         function_index: int = allowed_names.index(function_name)
         function: Dict[str, Any] = combined_data['defs'][function_index]
-        stop_tokens = {k for k, v in reversed_vocab.items() if v in [",", "}",
-                                                                     "\n"]}
-        for arg in function['args_names']:
+        fn_context_str: str = create_single_function_context(function)
+        fn_context: list[int] = llm.encode(fn_context_str)[0].tolist()
+        context_index = len(fn_context)
+        input_ids = fn_context + input_ids
+        parameters = function['parameters']
+        arg_names = list(parameters.keys())
+        for arg in arg_names:
+            arg_type = parameters[arg]['type']
             input_ids.extend(llm.encode(f'"{arg}": ')[0].tolist())
-            match function['args_types'][arg]:
+
+            match arg_type:
                 case 'number':
-                    print(f"{arg} (number): ")
+                    print(
+                        f"\033[92m{PADDING}{arg} (number): \033[0m",
+                        end='',
+                        flush=True)
                     ask_for_float(
                         llm, input_ids, masks_dict, reversed_vocab,
                         stop_tokens)
                 case 'integer':
-                    print(f"{arg} (integer): ")
+                    print(
+                        f"\033[92m{PADDING}{arg} (integer): \033[0m",
+                        end='',
+                        flush=True)
                     ask_for_int(
                         llm, input_ids, masks_dict, stop_tokens)
                 case 'string':
-                    print(f"{arg} (string): ")
+                    print(
+                        f"\033[92m{PADDING}{arg} (string): \033[0m",
+                        end='',
+                        flush=True)
                     ask_for_str(llm, input_ids, masks_dict, reversed_vocab)
                 case _:
-                    print(f"Error: unknown type {function['args_types'][arg]}")
+                    print(f"Error: unknown type {arg_type}")
 
-            if arg != function['args_names'][-1]:
+            print()
+            if arg != arg_names[-1]:
                 input_ids.extend(COMMA)
+        print()
         input_ids.extend(BRACE_CLOSE)
         input_ids.extend(llm.encode("\n}")[0].tolist())
-        # import time as t
         final_result.append(json.loads(
-            llm.decode(input_ids[generated_index:])))
-        # t1 = t.time()
-        # print(llm.decode(input_ids[generated_index:]))
-        # t2 = t.time()
-        # print(f"Time for call: {t2 - t1}")
+            llm.decode(input_ids[context_index:])))
+
     print("\nGeneration finished.")
 
     return final_result

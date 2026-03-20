@@ -26,6 +26,7 @@ clean:
 	rm -rf src/__pycache__
 	rm -rf llm_sdk/__pycache__
 	rm -rf .vscode
+	rm -rf llm_sdk/llm_sdk/__pycache__
 
 fclean: clean
 	rm -rf data/output

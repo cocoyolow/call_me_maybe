@@ -23,43 +23,47 @@ def exit_wrong_format() -> None:
     sys.exit(1)
 
 
-def validate_args(argv: List[str], argc: int) -> Tuple[Path, Path]:
-    """Validates the arguments passed to the program and returns the two paths:
-    input and output
-
-    Args:
-        argv (List[str]): the arguments passed to the program
-        argc (int): the number of arguments passed to the program
+def validate_args() -> Tuple[Path, Path, Path]:
+    """Validates and parses the arguments passed to the program.
+    Uses argparse to handle optional arguments in any order.
 
     Returns:
-        Path, Path: the two paths
+        Tuple[Path, Path, Path]:
+        the paths for
+        functions_definition, input, and output
     """
-    path_input: Path = Path(__file__).parent.parent / 'data' / 'input' / \
-        'function_calling_tests.json'
-    path_output: Path = Path(__file__).parent.parent / 'data' / 'output' / \
-        'function_calling_results.json'
-    if argc == 2 or argc == 4:
-        exit_wrong_format()
-    elif argc == 3:
-        if sys.argv[1] == '--input':
-            path_input = Path(sys.argv[2])
-        elif sys.argv[1] == '--output':
-            path_output = Path(sys.argv[2])
-        else:
-            exit_wrong_format()
-    elif argc == 5:
-        if sys.argv[1] == '--input':
-            path_input = Path(sys.argv[2])
-        else:
-            exit_wrong_format()
-        if sys.argv[3] == '--output':
-            path_output = Path(sys.argv[4])
-        else:
-            exit_wrong_format()
-    return path_input, path_output
+    import argparse
+    base_dir = Path(__file__).parent.parent
+
+    parser = argparse.ArgumentParser(
+        prog='uv run python -m src',
+        description='Call Me Maybe program',
+        allow_abbrev=False
+    )
+    parser.add_argument(
+        '--functions_definition',
+        type=Path,
+        default=base_dir / 'data' / 'input' / 'functions_definition.json',
+        help='Path to the functions definition JSON file'
+    )
+    parser.add_argument(
+        '--input',
+        type=Path,
+        default=base_dir / 'data' / 'input' / 'function_calling_tests.json',
+        help='Path to the input JSON file'
+    )
+    parser.add_argument(
+        '--output',
+        type=Path,
+        default=base_dir / 'data' / 'output' / 'function_calling_results.json',
+        help='Path to the output JSON file'
+    )
+    args = parser.parse_args()
+
+    return args.functions_definition, args.input, args.output
 
 
-def main() -> None:
+def main(llm_name: str | None = None) -> None:
     """Start the Call Me Maybe program
 
     Args:
@@ -69,24 +73,22 @@ def main() -> None:
         None
     """
 
-    argc: int = len(sys.argv)
-
     path_input: Path
     path_output: Path
-    path_input, path_output = validate_args(sys.argv, argc)
+    path_definitions: Path
+    path_definitions, \
+        path_input, \
+        path_output = validate_args()
 
     data: Dict[str, List[Dict[str, Any]]] = {}
     try:
-        json_calls_path = path_input
-        with open(json_calls_path, 'r') as f:
+        with open(path_input, 'r') as f:
             file_info = json.load(f)
             FunctionCallsValidator(items=file_info)
             print('function call json [OK]')
             data['calls'] = file_info
 
-        json_defs_path: Path = Path(__file__).parent.parent / \
-            'data' / 'input' / "functions_definition.json"
-        with open(json_defs_path, 'r') as f:
+        with open(path_definitions, 'r') as f:
             file_info = json.load(f)
             FunctionDefinitionsValidator(items=file_info)
             print('function definitions json [OK]')
@@ -103,7 +105,7 @@ def main() -> None:
 
     try:
         path_output.parent.mkdir(parents=True, exist_ok=True)
-        result: List[Dict[str, Any]] = start_generation(data)
+        result: List[Dict[str, Any]] = start_generation(data, llm_name)
         with open(path_output, "w") as f:
             json.dump(result, f, indent=4)
 
