@@ -1,4 +1,4 @@
-from typing import Dict, List, Tuple, Any, Set
+from typing import Dict, List, Any, Set
 import json
 import numpy as np
 import sys
@@ -34,28 +34,6 @@ def reverse_dict(vocab: Dict[str, int]) -> Dict[int, str]:
         Dict[int, str]: the reversed dictionary
     """
     return {v: k for k, v in vocab.items()}
-
-
-def create_vocab_buckets(vocab: Dict[str, int]) -> \
-        Dict[str, List[Tuple[int, str]]]:
-    """Create a dictionary of buckets based on the first character of
-    the tokens.
-
-    Args:
-        vocab (Dict[str, int]): the vocabulary to create the buckets from
-
-    Returns:
-        Dict[str, List[Tuple[int, str]]]: the buckets created from the vocab
-    """
-    buckets: Dict[str, List[Tuple[int, str]]] = {}
-    for t_str, t_id in vocab.items():
-        if not t_str:
-            continue
-        first_char = t_str[0]
-        if first_char not in buckets:
-            buckets[first_char] = []
-        buckets[first_char].append((t_id, t_str))
-    return buckets
 
 
 def get_masks(vocab: Dict[int, str]) -> Dict[str, Set[int]]:
@@ -188,8 +166,8 @@ def create_single_function_context(func_def: Dict[str, Any]) -> str:
         str: the context for the function
     """
     txt = f"Function {func_def['name']}:\n"
-    if 'description' in func_def:
-        txt += f"Description: {func_def['description']}\n"
+
+    txt += f"Description: {func_def['description']}\n"
     txt += "Parameters:\n"
     for param_name, param_info in func_def.get('parameters', {}).items():
         desc = param_info.get('description', '')
