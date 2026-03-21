@@ -1,8 +1,8 @@
 from typing import Dict, List, Tuple, Any, Set
-from llm_sdk import Small_LLM_Model  # type: ignore
 import json
 import numpy as np
 import sys
+from llm_sdk import Small_LLM_Model
 
 
 def json_to_dict(path: str) -> Any:
@@ -296,7 +296,7 @@ def ask_for_int(llm: Small_LLM_Model,
         if has_digits and next_token in stop_tokens:
             break
 
-        token_str = llm.decode(next_token)
+        token_str = llm.decode([next_token])
         input_ids.append(next_token)
         print(token_str, end='')
         nb_tokens += 1
@@ -407,7 +407,7 @@ def start_generation(combined_data: Dict[str,
     for y in range(len(combined_data['defs'])):
         allowed_names.append(combined_data['defs'][y]['name'])
 
-    if test_count != 0:
+    if test_count > 0:
         prompts = generate_prompts(test_count)
         combined_data['calls'] = prompts
     nb_prompts = len(combined_data['calls'])

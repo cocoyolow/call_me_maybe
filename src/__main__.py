@@ -29,9 +29,8 @@ def validate_args() -> Tuple[Path, Path, Path]:
             output.
     """
     import argparse
-    base_dir = Path(__file__).parent.parent
-
-    parser = argparse.ArgumentParser(
+    base_dir: Path = Path(__file__).parent.parent
+    parser: argparse.ArgumentParser = argparse.ArgumentParser(
         prog='uv run python -m src',
         description='Call Me Maybe program',
         allow_abbrev=False
@@ -54,7 +53,7 @@ def validate_args() -> Tuple[Path, Path, Path]:
         default=base_dir / 'data' / 'output' / 'function_calling_results.json',
         help='Path to the output JSON file'
     )
-    args = parser.parse_args()
+    args: argparse.Namespace = parser.parse_args()
 
     return args.functions_definition, args.input, args.output
 
